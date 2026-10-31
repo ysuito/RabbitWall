@@ -43,6 +43,14 @@ def nft(args, script=None):
     return result.stdout
 
 
+TIMED_DURATIONS = (60, 300, 1800)
+
+
+def validate_duration(enabled, duration):
+    if duration is not None and (not enabled or type(duration) is not int or duration not in TIMED_DURATIONS):
+        raise ValueError("duration_seconds must be 60, 300 or 1800 when enabling")
+
+
 def request_control(action, path=SOCKET, payload=None):
     if action not in {"status", "enable", "disable", "nodes", "save_nodes"}:
         raise ValueError("unsupported action")
@@ -50,7 +58,7 @@ def request_control(action, path=SOCKET, payload=None):
         client.settimeout(15 if action == "save_nodes" else 4)
         client.connect(str(path))
         request = {"action":action}
-        if action == "save_nodes": request["payload"] = payload
+        if action == "save_nodes" or (action == "enable" and payload is not None): request["payload"] = payload
         client.sendall((json.dumps(request) + "\n").encode())
         chunks = bytearray()
         while b"\n" not in chunks:
@@ -110,10 +118,11 @@ def install_runtime():
     return read_gate()["handle"]
 
 
-def apply_enabled(enabled):
+def apply_enabled(enabled, lease_ms=None):
     script = "flush set inet rabbitwall_console online_sources\n"
     if enabled:
-        script += f"add element inet rabbitwall_console online_sources {{ {AI_INTERFACE.network} timeout {LEASE}s }}\n"
+        timeout = f"{LEASE}s" if lease_ms is None else f"{lease_ms}ms"
+        script += f"add element inet rabbitwall_console online_sources {{ {AI_INTERFACE.network} timeout {timeout} }}\n"
     nft(["-f", "-"], script)
 
 
@@ -154,6 +163,7 @@ class Controller:
     def __init__(self):
         self.handle = install_runtime()
         self.desired = False
+        self.deadline = None
         self.error = None
         self.nodes = []
         self.config = SETTINGS
@@ -167,7 +177,15 @@ class Controller:
             self.handle = actual["handle"]
             apply_enabled(False)
             actual = read_gate()
-        return {"enabled": actual["enabled"], "available": True, "checked_at": utc_now(),
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            self.desired = False
+            apply_enabled(False)
+            actual = read_gate()
+        if not actual["enabled"]:
+            self.desired = False
+            self.deadline = None
+        remaining = max(0, self.deadline - time.monotonic()) if self.deadline is not None else None
+        return {"remaining_seconds": remaining, "enabled": actual["enabled"], "available": True, "checked_at": utc_now(),
                 "lease_seconds": LEASE, "nodes": self.nodes, "error": self.error}
 
     def node_settings(self):
@@ -193,8 +211,10 @@ class Controller:
                          "last_success":None, "latency_ms":None} for node in self.config['nodes']]]
         return self.node_settings()
 
-    def set_enabled(self, enabled):
+    def set_enabled(self, enabled, duration_seconds=None):
+        validate_duration(enabled, duration_seconds)
         self.status()
+        self.deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
         apply_enabled(enabled)
         self.desired = enabled
         self.error = None
@@ -210,7 +230,17 @@ class Controller:
             if self.desired and not current["enabled"]:
                 self.desired = False
             if self.desired:
-                apply_enabled(True)
+                if self.deadline is None:
+                    apply_enabled(True)
+                else:
+                    # Kernel expiry must never extend beyond the user's deadline.
+                    remaining = self.deadline - time.monotonic()
+                    if remaining <= 0:
+                        self.desired = False
+                        self.deadline = None
+                        apply_enabled(False)
+                    else:
+                        apply_enabled(True, lease_ms=min(LEASE * 1000, max(1, int(remaining * 1000))))
             self.error = None
         except (OSError, RuntimeError, ValueError, KeyError, StopIteration, subprocess.TimeoutExpired) as exc:
             self.desired = False
@@ -239,7 +269,7 @@ def run_controller():
                 if len(raw) > 16384 or not raw.endswith(b"\n"):
                     raise ValueError("invalid control request")
                 data = json.loads(raw)
-                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") == "save_nodes" else {"action"}):
+                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") == "save_nodes" or (data.get("action") == "enable" and "payload" in data) else {"action"}):
                     raise ValueError("invalid control request")
                 action = data["action"]
                 if action == "status":
@@ -251,10 +281,10 @@ def run_controller():
                     pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
                     print(json.dumps({"event":action,"at":utc_now(),"pid":pid,"uid":uid,"gid":gid,"count":len(status["nodes"])}), flush=True)
                 elif action in {"enable", "disable"}:
-                    status = controller.set_enabled(action == "enable")
+                    status = controller.set_enabled(action == "enable", data.get("payload"))
                     pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
                     print(json.dumps({"event": action, "at": utc_now(), "pid": pid, "uid": uid, "gid": gid,
-                                      "enabled": status["enabled"]}), flush=True)
+                                      "enabled": status["enabled"], "duration_seconds": data.get("payload")}), flush=True)
                 else:
                     raise ValueError("unsupported action")
                 response = {"ok": True, "status": status}

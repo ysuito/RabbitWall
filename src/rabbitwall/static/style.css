@@ -119,8 +119,8 @@ pre{font-size:12px}.topology small{font-size:11px}.topology code{font-size:13px}
 .gate-current #gate-caption,.gate-panel .hint,.gate-panel #auth-link{font-size:12px}
 th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 .endpoint-country,.badge,.table-note{font-size:12px}.metrics span{font-size:13px}.metrics b{font-size:11px}
-@media(min-width:851px){.map-shell{grid-template-columns:minmax(0,1fr) 340px}}
-@media(min-width:851px) and (max-width:1100px){.map-shell{grid-template-columns:minmax(0,1fr) 300px}}
+@media(min-width:851px){.map-shell{--route-width:340px;grid-template-columns:minmax(0,1fr) var(--route-width)}.hud-left{grid-template-columns:minmax(0,1fr) var(--route-width)}}
+@media(min-width:851px) and (max-width:1100px){.map-shell{--route-width:300px}}
 @media(max-width:600px){.node-row strong{font-size:16px}.node-row code{font-size:13px}.node-row small{font-size:12px}.atlas-toolbar .map-actions{max-width:130px}}
 
 /* Traffic analysis stays in its own page; the map keeps its full-height layout. */
@@ -152,3 +152,7 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 @media(max-width:800px){.node-edit-row{grid-template-columns:1fr 1fr}.node-edit-row>label:nth-child(3){grid-column:1/-1}.node-edit-flags{grid-column:1/-1}.node-remove{grid-column:1/-1;grid-row:auto;justify-self:start}}
 
 .node-state.idle{color:var(--muted);border-color:var(--line)}
+
+.gate-timers{display:flex;gap:8px;padding:0 12px;flex-wrap:wrap}.gate-timers button{flex:1;padding:7px 9px;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--accent);cursor:pointer}.gate-timers button:disabled{opacity:.45;cursor:not-allowed}.gate-timers button:hover:enabled{color:var(--bg);background:var(--accent)}#gate-timer{font-size:13px;margin:7px 12px;color:var(--ink)}
+
+#control-message:empty{display:none}

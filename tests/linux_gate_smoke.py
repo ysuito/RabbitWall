@@ -217,6 +217,18 @@ except OSError: print("blocked",flush=True)
         dns_push.stdin.write("receive\n"); dns_push.stdin.flush()
         assert dns_push.stdout.readline().strip() == "blocked"
         print("PASS: OFF blocks established TCP/local DNS, relay upstream and in-flight DNS replies", flush=True)
+        controller.set_enabled(True, 60)
+        assert 0 < controller.status()['remaining_seconds'] <= 60
+        # Shorten the deadline to exercise real kernel expiry without a minute's wait.
+        controller.deadline = time.monotonic() + 0.3
+        controller.tick()
+        time.sleep(0.5)
+        assert not control.read_gate()['enabled']
+        client('ai', '1.1.1.1', 443, expected=False)
+        client('ai', '10.1.0.1', 53, expected=False, udp=True)
+        controller.tick()
+        assert not controller.desired and controller.deadline is None
+        print('PASS: timed access expires in the kernel without another controller tick', flush=True)
         controller.set_enabled(True)
         control.nft(["-f", "-"], "flush set inet rabbitwall_console online_sources\nadd element inet rabbitwall_console online_sources { 10.1.0.0/24 timeout 1s }\n")
         time.sleep(1.3)
@@ -249,6 +261,12 @@ except OSError: print("blocked",flush=True)
             return process
         process=start_controller()
         doc=control.request_control('nodes')
+        timed = control.request_control('enable', payload=60)
+        assert timed['enabled'] and 0 < timed['remaining_seconds'] <= 60
+        try:
+            control.request_control('enable', payload=True)
+        except ValueError: pass
+        else: raise AssertionError('Socket accepted an invalid duration')
         control.request_control('enable')
         saved=control.request_control('save_nodes',payload={'nodes':[],'revision':doc['revision']})
         assert saved['nodes']==[] and control.request_control('status')['enabled']

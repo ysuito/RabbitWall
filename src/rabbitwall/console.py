@@ -17,7 +17,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from urllib.parse import urlsplit
-from control import TOKEN, request_control
+from control import TOKEN, request_control, validate_duration
 from geoip import CountryLookup, DEFAULT_DATABASE
 from dns_observations import load_observations, domain_hints
 from traffic_analytics import collect_analytics
@@ -275,16 +275,24 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                         *[{"id": node['id'], "name": node['label'], "ip": node['ip'], "state": "up", "latency_ms": 0.6, "checked_at": utc_now(), "last_success": utc_now()} for node in SETTINGS['nodes']]]}
 
 
-    def control_status(action="status"):
+    demo_deadline = None
+
+    def control_status(action="status", duration_seconds=None):
+        nonlocal demo_deadline
         if demo:
             if action != "status":
                 demo_control["enabled"] = action == "enable"
+                demo_deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
+            if demo_deadline is not None and time.monotonic() >= demo_deadline:
+                demo_control["enabled"] = False
+                demo_deadline = None
+            demo_control["remaining_seconds"] = max(0, demo_deadline-time.monotonic()) if demo_deadline is not None else None
             demo_control["checked_at"] = utc_now()
             for node in demo_control["nodes"]:
                 node["checked_at"] = demo_control["checked_at"]
                 node["last_success"] = demo_control["checked_at"]
             return dict(demo_control)
-        return callback(action)
+        return callback(action) if duration_seconds is None else callback(action, payload=duration_seconds)
 
     demo_config = json.loads(json.dumps(SETTINGS))
     demo_lock = threading.Lock()
@@ -378,8 +386,9 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 data = json.loads(self.rfile.read(size))
                 if path == "/api/nodes":
                     if not isinstance(data, dict) or set(data) != {"nodes", "revision"}: raise ValueError("nodes and revision required")
-                elif not isinstance(data, dict) or set(data) != {"enabled"} or type(data["enabled"]) is not bool:
+                elif not isinstance(data, dict) or set(data) not in ({"enabled"}, {"enabled", "duration_seconds"}) or type(data["enabled"]) is not bool:
                     raise ValueError("enabled must be boolean")
+                if path == "/api/internet": validate_duration(data["enabled"], data.get("duration_seconds"))
             except (ValueError, OSError):
                 self.send_payload(400, {"error": "入力形式またはリクエストサイズが正しくありません。"})
                 return
@@ -394,7 +403,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                     self.send_payload(503, {'error':'保存結果を確認できません。再読み込みして確認してください。', 'detail':str(exc)[:300]})
                 return
             try:
-                status = control_status("enable" if data["enabled"] else "disable")
+                status = control_status("enable" if data["enabled"] else "disable", data.get("duration_seconds"))
                 self.send_payload(200, {"control": status, "demo": demo})
             except Exception as exc:
                 self.send_payload(503, {"error": "通信状態の変更を確認できませんでした。", "detail": str(exc)[:300]})

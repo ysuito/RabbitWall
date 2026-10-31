@@ -19,6 +19,8 @@ Use the mouse wheel over the map to zoom between 1× and 6× around the cursor. 
 
 Use the toggle through the management PC's mTLS connection. The gate starts **閉 (closed)** after a reboot, controller restart, installation or update. While **開 (open)**, access is maintained by a 20-second kernel lease that the controller renews. If renewal stops, the lease expires and access closes.
 
+The **1分 / 5分 / 30分** buttons open access for 1, 5 or 30 minutes and then automatically close it, including DNS and existing external sessions. Remaining time is shown in the gate panel. The deadline is enforced by the controller and kernel lease even after closing the browser. Clicking a timed button again sets a new deadline starting now; the toggle closes access immediately. Opening with the toggle uses no time limit. Reboots and controller restarts discard the timer and start closed.
+
 Closing blocks AI outbound traffic, in-flight traffic and its replies, and DNS reception, forwarding and responses. Management SSH, monitoring Ping and RabbitWall's own update traffic remain available. Even while open, traffic is limited to the baseline firewall policy: TCP 80/443 and UDP 123 to public IPv4 addresses, plus DNS through RabbitWall.
 
 ## Adding, editing and removing nodes

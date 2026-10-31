@@ -1,6 +1,7 @@
 "use strict";
 let snapshot = null, tab = "flows";
 let control = null, controlBusy = false, controlDemo = false, controlEpoch = 0;
+let controlReceivedAt = performance.now();
 let controlAuthorized = false;
 let nodeSettings=null, nodeDraft=[], nodeDirty=false, nodeBusy=false;
 const $ = id => document.getElementById(id);
@@ -81,18 +82,28 @@ function bytes(value) {
 function cell(row, value, className = "") {
   const td = document.createElement("td"); td.textContent = value; td.className = className; row.append(td); return td;
 }
+function renderGateTimer() {
+  const known = control?.available && !control.error;
+  const remaining = known && control.enabled ? control.remaining_seconds : null;
+  const seconds = remaining == null ? null : Math.max(0, Math.ceil(remaining - (performance.now() - controlReceivedAt) / 1000));
+  $("gate-timer").textContent = seconds !== null
+    ? seconds > 0 ? `自動遮断まで ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2,"0")}秒` : "期限到達・遮断状態を確認中"
+    : "";
+  $("gate-timer").hidden = seconds === null;
+}
 function renderControl() {
   const known = control && control.available && !control.error;
   const state = known ? control.enabled ? "online" : "offline" : "unknown";
   $("gate-panel").dataset.state=state;
   $("gate-panel").setAttribute("aria-busy",String(controlBusy));
   $("gate-state").textContent = known ? control.enabled ? "開" : "閉" : "不明";
-  $("gate-caption").textContent = known ? control.enabled ? "インターネット接続を許可中" : "インターネット接続を遮断中" : "現在の接続状態を確認できません";
   $("gate-state").className = "gate-state " + state;
   $("internet-toggle").disabled=controlBusy || !controlAuthorized;
   $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && control.enabled)));
   $("internet-toggle").setAttribute("aria-label",known ? "AIセグメントの対外接続" : "AIセグメントの対外接続・状態不明（操作すると閉じます）");
   $("internet-toggle").title=controlBusy ? "変更中…" : !controlAuthorized ? "証明書付きHTTPSで接続してください" : known ? control.enabled ? "接続を閉じる" : "接続を開く" : "接続を閉じる（現在の状態は不明）";
+  document.querySelectorAll("[data-duration]").forEach(button => { button.disabled=controlBusy || !controlAuthorized; });
+  renderGateTimer();
   $("auth-link").hidden=controlAuthorized;
   $("nodes").replaceChildren();
   for (const node of control?.nodes || []) {
@@ -119,21 +130,21 @@ async function refreshControl() {
     const response = await fetch("/api/control", {cache:"no-store", signal:AbortSignal.timeout(8000)});
     const data = await response.json(); if (!response.ok) throw new Error(data.error || "状態取得失敗");
     if (epoch !== controlEpoch || controlBusy) return;
-    control = data.control; controlDemo = data.demo; controlAuthorized=Boolean(data.auth?.can_control); renderControl();
-    $("control-message").textContent = controlDemo ? "試験表示・実機操作なし" : control.error || "管理SSH・RabbitWall自身の通信は維持";
+    control = data.control; controlReceivedAt = performance.now(); controlDemo = data.demo; controlAuthorized=Boolean(data.auth?.can_control); renderControl();
+    $("control-message").textContent = controlDemo ? "試験表示・実機操作なし" : control.error || "";
   } catch (e) {
     if (epoch !== controlEpoch || controlBusy) return;
     controlAuthorized=false; control = {available:false, nodes:control?.nodes || [], error:e.message}; renderControl();
     $("control-message").textContent = "通信状態を確認できません。" + e.message;
   } finally { setTimeout(refreshControl, 5000); }
 }
-async function setInternet(enabled) {
+async function setInternet(enabled, duration_seconds = null) {
   if (controlBusy) return;
   controlBusy = true; controlEpoch++; renderControl(); $("control-message").textContent = "通信状態を変更しています…";
   try {
-    const response = await fetch("/api/internet", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({enabled}), signal:AbortSignal.timeout(10000)});
+    const response = await fetch("/api/internet", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(duration_seconds === null ? {enabled} : {enabled, duration_seconds}), signal:AbortSignal.timeout(10000)});
     const data = await response.json(); if (!response.ok) throw new Error(data.error || "変更失敗");
-    control = data.control; controlDemo = data.demo;
+    control = data.control; controlReceivedAt = performance.now(); controlDemo = data.demo;
     $("control-message").textContent = controlDemo ? "試験 / " + (enabled ? "開" : "閉") : enabled ? "対外接続を許可しました" : "既存の外部通信も遮断しました";
   } catch (e) {
     // A timed-out response does not establish whether the change took effect.
@@ -371,3 +382,7 @@ $("node-form").addEventListener("submit",async event=>{
   }catch(error){$("node-message").textContent="保存結果を確認してください："+error.message;}
   finally{nodeBusy=false;updateNodeButtons();}
 });
+
+document.querySelectorAll("[data-duration]").forEach(button => button.addEventListener("click", () => setInternet(true, Number(button.dataset.duration))));
+
+setInterval(renderGateTimer, 1000);

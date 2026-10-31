@@ -174,6 +174,12 @@ class HTTP(unittest.TestCase):
             response = self.request("/api/internet", method="POST", headers=headers, body=body, handler=handler)
             self.assertIn(b"200 OK", response)
             callback.assert_called_once_with("enable")
+            callback.reset_mock()
+            body = '{"enabled":true,"duration_seconds":300}'
+            headers = f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\nOrigin: http://127.0.0.1:8765\r\nAuthorization: Bearer " + "x" * 43 + "\r\n"
+            response = self.request("/api/internet", method="POST", headers=headers, body=body, handler=handler)
+            self.assertIn(b"200 OK", response)
+            callback.assert_called_once_with("enable", payload=300)
 
     def test_proxy_auth_metadata_needs_server_only_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -195,6 +201,25 @@ class HTTP(unittest.TestCase):
         for body in ['{"enabled":"false"}', '{"enabled":true,"command":"flush ruleset"}', '[]']:
             headers = f"Origin: http://127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
             self.assertIn(b"400", self.request("/api/internet", method="POST", headers=headers, body=body, handler=handler))
+        callback.assert_not_called()
+
+    def test_timed_gate_api_validation_and_demo_expiry(self):
+        callback = unittest.mock.Mock()
+        handler = console.make_handler(Path("/none"), 8765, demo=True, control_callback=callback)
+        def post(data):
+            body = json.dumps(data)
+            headers = f"Origin: http://127.0.0.1:8765\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
+            return self.request("/api/internet", method="POST", headers=headers, body=body, handler=handler)
+        for duration in (True, 0, "60", 60.0, 61):
+            self.assertIn(b"400", post({"enabled":True, "duration_seconds":duration}))
+        self.assertIn(b"400", post({"enabled":False, "duration_seconds":60}))
+        with patch.object(console.time, "monotonic", return_value=100) as now:
+            self.assertIn(b"200 OK", post({"enabled":True, "duration_seconds":60}))
+            now.return_value = 161
+            response = self.request("/api/control", handler=handler)
+            state = json.loads(response.split(b"\r\n\r\n",1)[1])["control"]
+            self.assertFalse(state["enabled"])
+            self.assertIsNone(state["remaining_seconds"])
         callback.assert_not_called()
 
     def test_demo_toggle_has_no_real_controller_side_effect(self):
@@ -252,6 +277,48 @@ class Gate(unittest.TestCase):
             self.assertEqual(nodes[2]["state"], "no_reply")
             self.assertEqual(nodes[2]["last_success"], "previous")
             self.assertEqual(run.call_args_list[1][0][0][-1], "10.1.0.10")
+
+    def test_timed_gate_expires_and_cannot_renew_after_deadline(self):
+        controller = self.controller()
+        gate = {"handle": 42, "enabled": False}
+        def apply(enabled, **kwargs):
+            gate["enabled"] = enabled
+        with patch.object(control, "read_gate", side_effect=lambda: dict(gate)), patch.object(control, "apply_enabled", side_effect=apply) as change, patch.object(control.time, "monotonic", return_value=100) as now:
+            status = controller.set_enabled(True, 60)
+            self.assertEqual(status["remaining_seconds"], 60)
+            now.return_value = 155
+            controller.tick()
+            change.assert_called_with(True, lease_ms=5000)
+            now.return_value = 160
+            controller.tick()
+            self.assertFalse(controller.status()["enabled"])
+            self.assertFalse(controller.desired)
+            self.assertIsNone(controller.deadline)
+            change.assert_called_with(False)
+            now.return_value = 200
+            change.reset_mock()
+            controller.tick()
+            change.assert_not_called()
+
+    def test_timed_gate_reset_manual_close_and_validation(self):
+        controller = self.controller()
+        gate = {"handle":42, "enabled":False}
+        def apply(enabled, **kwargs): gate["enabled"] = enabled
+        with patch.object(control, "read_gate", side_effect=lambda: dict(gate)), patch.object(control, "apply_enabled", side_effect=apply) as change, patch.object(control.time, "monotonic", return_value=100) as now:
+            for duration in (0, -1, True, 61, "60", 60.0):
+                with self.assertRaises(ValueError): controller.set_enabled(True, duration)
+            with self.assertRaises(ValueError): controller.set_enabled(False, 60)
+            change.assert_not_called()
+            controller.set_enabled(True, 60)
+            now.return_value = 110
+            self.assertEqual(controller.set_enabled(True, 300)["remaining_seconds"], 300)
+            controller.set_enabled(False)
+            self.assertIsNone(controller.deadline)
+            controller.set_enabled(True, 1800)
+            controller.set_enabled(True)
+            self.assertIsNone(controller.deadline)
+            controller.tick()
+            change.assert_called_with(True)
 
     def test_persistent_install_validates_before_replacing_config(self):
         with tempfile.TemporaryDirectory() as directory:
