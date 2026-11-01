@@ -86,7 +86,7 @@ def main():
     control.nft(['-f','-'],script)
     controller = control.Controller()
     try:
-        for namespace, ports, udp in [("upstream", "443,53", "53"), ("ai", "22", "none"), (None, "22,53", "53")]:
+        for namespace, ports, udp in [("upstream", "443,53", "53"), ("ai", "22,443", "none"), (None, "22,53", "53")]:
             prefix = ["ip", "netns", "exec", namespace] if namespace else []
             child = subprocess.Popen(prefix + [sys.executable, "-u", "-c", SERVER, ports, udp, "10.0.0.254" if namespace == "upstream" else "10.1.0.1"], stdout=subprocess.PIPE, text=True)
             children.append(child)
@@ -105,6 +105,34 @@ def main():
         client(None, "10.0.0.254", 53, source="10.1.0.1", expected=False, udp=True)
         client(None, "10.0.0.254", 53)  # RabbitWall OS DNS still works.
         print("PASS: boot OFF, DNS blocked, management SSH and health preserved, RABBITWALL online", flush=True)
+        from firewall import node_rule_batch
+        https_config = copy.deepcopy(SETTINGS)
+        for node in https_config['nodes']:
+            if node['interface'] == https_config['ai_if']:
+                node.update(allow_https=True,allow_ssh=False,allow_ping=False,monitor=False)
+        client('upstream','10.1.0.10',443,source='10.0.0.9',expected=False)
+        control.nft(['-f','-'],node_rule_batch(https_config,control.baseline()))
+        client('upstream','10.1.0.10',443,source='10.0.0.9')
+        client('upstream','10.1.0.10',443,source='10.0.0.254',expected=False)
+        client('upstream','10.1.0.10',22,source='10.0.0.9',expected=False)
+        assert not controller.status()['enabled']
+        https_code = """import socket,sys
+s=socket.socket();s.settimeout(.7);s.bind(("10.0.0.9",0));s.connect(("10.1.0.10",443))
+print("ready",flush=True)
+for line in sys.stdin:
+ try:
+  s.sendall(b"test");print("ok" if s.recv(100)==b"test" else "bad",flush=True)
+ except OSError: print("blocked",flush=True)
+"""
+        https_process=subprocess.Popen(['ip','netns','exec','upstream',sys.executable,'-u','-c',https_code],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+        children.append(https_process)
+        assert https_process.stdout.readline().strip()=='ready'
+        control.nft(['-f','-'],node_rule_batch(SETTINGS,control.baseline()))
+        https_process.stdin.write('send\n');https_process.stdin.flush()
+        assert https_process.stdout.readline().strip()=='blocked'
+        client('upstream','10.1.0.10',443,source='10.0.0.9',expected=False)
+        print('PASS: opt-in TCP 443 works while closed, excludes other sources/SSH and revokes established access',flush=True)
+
         controller.set_enabled(True)
         client("ai", "1.1.1.1", 443)
         client("ai", "10.0.0.254", 53, expected=False)
@@ -151,11 +179,15 @@ for line in sys.stdin:
             probes=control.probe_nodes(config=edited)
             assert all(node['state']=='disabled' for node in probes if node['id'] in ('ai-host','second-ai'))
             edited['nodes'][-1]['allow_ssh']=True
+            edited['nodes'][-1]['allow_https']=True
             # Use the revision of the unmodified saved document.
             import json
             current=dict(edited,nodes=json.loads((root/'nodes.json').read_text())['nodes'])
             edited=save_nodes(current,edited['nodes'])
             client('upstream','10.1.0.11',22,source='10.0.0.9')
+            client('upstream','10.1.0.11',443,source='10.0.0.9')
+            client('upstream','10.1.0.10',443,source='10.0.0.9',expected=False)
+            assert 'ip daddr 10.1.0.11 tcp dport 443' in (root/'rabbitwall.nft').read_text()
             client('ai','1.1.1.1',443)
             client('ai','10.1.0.1',53,udp=True)
             save_nodes(edited,original['nodes'])

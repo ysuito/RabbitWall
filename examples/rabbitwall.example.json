@@ -24,6 +24,7 @@
       "interface": "eth0",
       "monitor": true,
       "allow_ssh": false,
+      "allow_https": false,
       "allow_ping": false
     },
     {
@@ -33,6 +34,7 @@
       "interface": "eth1",
       "monitor": true,
       "allow_ssh": true,
+      "allow_https": false,
       "allow_ping": true
     }
   ]

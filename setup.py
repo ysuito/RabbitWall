@@ -39,8 +39,8 @@ def init(path, defaults=False):
         ai = ipaddress.IPv4Interface(config['ai_cidr'])
         example = str(ai.network.network_address + 10) if ai.network.num_addresses > 11 else str(ai.network.network_address+2)
         target = input(f'AI host IPv4 [{example}]: ').strip() or example
-        config['nodes'] = [{'id':'gateway','label':'Gateway','ip':config['gateway'],'interface':config['uplink_if'],'monitor':True,'allow_ssh':False,'allow_ping':False},
-                           {'id':'ai-host','label':'AI Host','ip':target,'interface':config['ai_if'],'monitor':True,'allow_ssh':True,'allow_ping':True}]
+        config['nodes'] = [{'id':'gateway','label':'Gateway','ip':config['gateway'],'interface':config['uplink_if'],'monitor':True,'allow_ssh':False,'allow_ping':False,'allow_https':False},
+                           {'id':'ai-host','label':'AI Host','ip':target,'interface':config['ai_if'],'monitor':True,'allow_ssh':True,'allow_ping':True,'allow_https':False}]
     config = validate(config)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2)+'\n'); path.chmod(0o600)

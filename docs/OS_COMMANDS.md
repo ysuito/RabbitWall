@@ -14,7 +14,7 @@ This reference lists external programs launched by RabbitWall's production sourc
 | Controller, startup / node saves | `nft -j -a list ruleset` | Inspect baseline policies, dedicated chains, rule identifiers and offload |
 | Controller, startup / gate changes / roughly every 4 seconds while open | `nft -f -` | Initialize the closed gate or update its permission set; open permissions expire after 20 seconds |
 | Controller, about every 10 seconds per monitored node | `ping -n -c 1 -W 1 -I <interface> <IPv4>` | Probe node health; disabled monitors are skipped |
-| Controller, node saves | `nft -c -f -` → `nft -f -` | Validate and apply management SSH/Ping and probe rules without rebuilding NICs, DNS or the gate |
+| Controller, node saves | `nft -c -f -` → `nft -f -` | Validate and apply management SSH/HTTPS/Ping and probe rules without rebuilding NICs, DNS or the gate |
 | Controller, failed node-save recovery | `nft -f -` | Attempt to restore previous node permissions |
 
 Sources: [console.py](../src/rabbitwall/console.py), [control.py](../src/rabbitwall/control.py), [node_config.py](../src/rabbitwall/node_config.py). Generated nftables statements are in [firewall.py](../src/rabbitwall/firewall.py). Collection intervals are configurable; probes take time and are not a strict real-time schedule.

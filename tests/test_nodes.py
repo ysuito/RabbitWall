@@ -37,9 +37,34 @@ class NodeSettings(unittest.TestCase):
         self.assertNotIn('flush ruleset', text)
         self.assertNotIn('online_sources', text)
 
+    def test_https_is_opt_in_and_independent_of_ssh_and_monitoring(self):
+        config = self.config()
+        ai = next(node for node in config['nodes'] if node['interface'] == config['ai_if'])
+        ai.pop('allow_https', None)
+        self.assertFalse(settings.management_allowed(ai, 'https', config))
+        self.assertFalse(node_config.document(config)['nodes'][-1]['allow_https'])
+        text = node_rule_batch(config, [])
+        self.assertNotIn(f'ip daddr {ai["ip"]} tcp dport 443', text)
+        ai.update(allow_https=True, allow_ssh=False, allow_ping=False, monitor=False)
+        text = node_rule_batch(config, [])
+        self.assertIn(f'ip saddr {config["admin_ip"]} ip daddr {ai["ip"]} tcp dport 443 ct state {{ new, established }} accept', text)
+        self.assertIn(f'ip saddr {ai["ip"]} ip daddr {config["admin_ip"]} tcp sport 443 ct state established ct direction reply accept', text)
+        self.assertNotIn(f'ip daddr {ai["ip"]} tcp dport 22', text)
+        self.assertIn('tcp dport { 22, 443 } counter drop', text)
+        self.assertIn('tcp sport { 22, 443 } ct direction reply counter drop', text)
+        self.assertNotIn('online_sources', text)
+        self.assertTrue(node_config.candidate(config, self.payload(config,config['nodes']))['nodes'][-1]['allow_https'])
+        nodes = node_config.document(config)['nodes']
+        del nodes[-1]['allow_https']
+        with self.assertRaisesRegex(ValueError, 'explicit'):
+            node_config.candidate(config, {'nodes':nodes,'revision':node_config.revision(config)})
+        config['nodes'][0]['allow_https'] = True
+        with self.assertRaisesRegex(ValueError, 'AI-side'):
+            settings.validate(config)
+
     def test_validation_rejects_duplicate_injection_wrong_subnet_flags_and_stale_revision(self):
         config = self.config()
-        for edit in ({'ip':'127.0.0.1'}, {'interface':'eth1; reboot'}, {'monitor':'yes'}, {'allow_ssh':1}):
+        for edit in ({'ip':'127.0.0.1'}, {'interface':'eth1; reboot'}, {'monitor':'yes'}, {'allow_ssh':1}, {'allow_https':1}):
             nodes = copy.deepcopy(config['nodes']); nodes[-1].update(edit)
             with self.subTest(edit=edit), self.assertRaises(ValueError):
                 node_config.candidate(config, self.payload(config, nodes))

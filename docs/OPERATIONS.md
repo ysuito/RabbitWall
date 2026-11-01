@@ -21,19 +21,19 @@ Use the toggle through the management PC's mTLS connection. The gate starts **�
 
 The **1分 / 5分 / 30分** buttons open access for 1, 5 or 30 minutes and then automatically close it, including DNS and existing external sessions. Remaining time is shown in the gate panel. The deadline is enforced by the controller and kernel lease even after closing the browser. Clicking a timed button again sets a new deadline starting now; the toggle closes access immediately. Opening with the toggle uses no time limit. Reboots and controller restarts discard the timer and start closed.
 
-Closing blocks AI outbound traffic, in-flight traffic and its replies, and DNS reception, forwarding and responses. Management SSH, monitoring Ping and RabbitWall's own update traffic remain available. Even while open, traffic is limited to the baseline firewall policy: TCP 80/443 and UDP 123 to public IPv4 addresses, plus DNS through RabbitWall.
+Closing blocks AI outbound traffic, in-flight traffic and its replies, and DNS reception, forwarding and responses. Management SSH/HTTPS, monitoring Ping and RabbitWall's own update traffic remain available. Even while open, traffic is limited to the baseline firewall policy: TCP 80/443 and UDP 123 to public IPv4 addresses, plus DNS through RabbitWall.
 
 ## Adding, editing and removing nodes
 
-Connect from the management PC over certificate-authenticated HTTPS and open **Settings → Node management**. Set the name, IPv4 address and AI/uplink side, then choose **Health monitoring**, **Management PC SSH** and **Management PC Ping** independently. Select **Save and apply**. Up to 12 nodes, including uplink nodes, can be registered; an empty list is allowed. New UI nodes have management access disabled. Management SSH/Ping permissions apply only to AI-side nodes.
+Connect from the management PC over certificate-authenticated HTTPS and open **Settings → Node management**. Set the name, IPv4 address and AI/uplink side, then choose **Health monitoring**, **Management PC SSH**, **Management PC HTTPS** and **Management PC Ping** independently. Select **Save and apply**. Up to 12 nodes, including uplink nodes, can be registered; an empty list is allowed. New UI nodes have management access disabled. Management SSH/HTTPS/Ping permissions apply only to AI-side nodes.
 
 Disabled monitoring is displayed as **休 (not monitored)**. Monitoring never grants management access by itself. Removing a node does not exclude its traffic from subnet-wide observation or DNS. Map labels and layout refresh after saving; additional map nodes are grouped when space is limited.
 
-Saving updates only node settings and dedicated firewall chains, without changing NICs, DNS, the Internet gate state or restarting services. Revoking management access or removing a node blocks existing management SSH connections too. Concurrent edits are rejected instead of overwriting another save; reload and edit again. Invalid input changes nothing. A failed save attempts to restore prior files and rules; an application failure closes the Internet gate.
+Saving updates only node settings and dedicated firewall chains, without changing NICs, DNS, the Internet gate state or restarting services. Revoking management access or removing a node blocks existing management SSH/HTTPS connections too. Concurrent edits are rejected instead of overwriting another save; reload and edit again. Invalid input changes nothing. A failed save attempts to restore prior files and rules; an application failure closes the Internet gate.
 
 Initial nodes come from `/etc/rabbitwall.json`. UI saves are stored in `/etc/rabbitwall-nodes/nodes.json` and take precedence. They survive `setup.py update` and reboot. Previous settings are backed up under `/etc/rabbitwall-nodes/node-backups/`; include both JSON files in configuration backups.
 
-`setup.py reconfigure --config rabbitwall.json --apply-network` reapplies the supplied JSON as the complete network configuration and clears UI node overrides. Copy wanted nodes into the input JSON first. Optional per-node boolean fields are `monitor`, `allow_ssh` and `allow_ping`. If omitted, monitoring is enabled and AI-side management SSH/Ping are allowed; set them explicitly when editing JSON manually.
+`setup.py reconfigure --config rabbitwall.json --apply-network` reapplies the supplied JSON as the complete network configuration and clears UI node overrides. Copy wanted nodes into the input JSON first. Optional per-node boolean fields are `monitor`, `allow_ssh`, `allow_https` and `allow_ping`. If omitted, monitoring and AI-side management SSH/Ping are enabled, while HTTPS is disabled. HTTPS permission applies to TCP 443 and remains available when Internet access is closed. Set each field explicitly when editing JSON manually.
 
 ## DNS and inferred domains
 
@@ -55,7 +55,7 @@ Known domains persist across restarts. The catalog is limited to 100,000 names. 
 
 ## Traffic rankings
 
-Traffic from the AI network to public IPv4 addresses is ranked over the last hour or 24 hours, by destination IP or inferred domain, and by sent, received or total bytes. The console displays the top 20 entries. Management SSH, RabbitWall's own traffic and local DNS are excluded.
+Traffic from the AI network to public IPv4 addresses is ranked over the last hour or 24 hours, by destination IP or inferred domain, and by sent, received or total bytes. The console displays the top 20 entries. Management SSH/HTTPS, RabbitWall's own traffic and local DNS are excluded.
 
 About every five seconds, differences are taken from cumulative conntrack counters and stored in one-minute buckets. The same cumulative value is not repeatedly added. The first observation establishes a baseline; a decrease in counters or a collection gap longer than 30 seconds also resets the baseline.
 

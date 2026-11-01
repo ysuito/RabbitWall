@@ -329,7 +329,7 @@ function renderNodeEditor() {
     side.value=node.interface;sideLabel.append(side);row.append(sideLabel);
     const flags=document.createElement("div");flags.className="node-edit-flags";
     const management=[];
-    for(const [key,title] of [["monitor","死活監視"],["allow_ssh","管理PCからSSH"],["allow_ping","管理PCからPing"]]){
+    for(const [key,title] of [["monitor","死活監視"],["allow_ssh","管理PCからSSH"],["allow_https","管理PCからHTTPS"],["allow_ping","管理PCからPing"]]){
       const label=document.createElement("label"),box=document.createElement("input");box.type="checkbox";box.checked=node[key];
       box.setAttribute("aria-label",`ノード${index+1} ${title}`);
       if(key!=="monitor"){box.disabled=node.interface!==nodeSettings.interfaces.find(entry=>entry.side==="AI").name;management.push([key,box]);}
@@ -366,7 +366,7 @@ async function loadNodeSettings() {
 }
 $("node-add").addEventListener("click",()=>{
   if(!nodeSettings || nodeBusy || !controlAuthorized || nodeDraft.length>=12)return;
-  nodeDraft.push({id:"node-"+crypto.randomUUID().slice(0,8),label:"",ip:"",interface:nodeSettings.interfaces.find(entry=>entry.side==="AI").name,monitor:true,allow_ssh:false,allow_ping:false});
+  nodeDraft.push({id:"node-"+crypto.randomUUID().slice(0,8),label:"",ip:"",interface:nodeSettings.interfaces.find(entry=>entry.side==="AI").name,monitor:true,allow_ssh:false,allow_https:false,allow_ping:false});
   nodeDirty=true;renderNodeEditor();
 });
 $("node-reload").addEventListener("click",()=>{if(!nodeDirty || window.confirm("未保存の変更を破棄して再読み込みしますか？"))loadNodeSettings();});

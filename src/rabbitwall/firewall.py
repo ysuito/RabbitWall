@@ -63,18 +63,19 @@ def node_rule_batch(config, objects):
         if node['interface'] != c['ai_if']: continue
         outbound = f'iifname "{c["uplink_if"]}" oifname "{c["ai_if"]}" ip saddr {c["admin_ip"]} ip daddr {node["ip"]}'
         inbound = f'iifname "{c["ai_if"]}" oifname "{c["uplink_if"]}" ip saddr {node["ip"]} ip daddr {c["admin_ip"]}'
-        if management_allowed(node, 'ssh', c):
-            lines += [f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} tcp dport 22 ct state {{ new, established }} accept',
-                      f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} tcp sport 22 ct state established ct direction reply accept']
+        for kind, port in (('ssh', 22), ('https', 443)):
+            if management_allowed(node, kind, c):
+                lines += [f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} tcp dport {port} ct state {{ new, established }} accept',
+                          f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} tcp sport {port} ct state established ct direction reply accept']
         if management_allowed(node, 'ping', c):
             lines += [f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} icmp type echo-request accept',
                       f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} icmp type echo-reply ct state established accept']
     # These denies precede the baseline established rule, revoking existing access too.
     outbound = f'iifname "{c["uplink_if"]}" oifname "{c["ai_if"]}" ip saddr {c["admin_ip"]} ip daddr {ai.network}'
     inbound = f'iifname "{c["ai_if"]}" oifname "{c["uplink_if"]}" ip saddr {ai.network} ip daddr {c["admin_ip"]}'
-    lines += [f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} tcp dport 22 counter drop',
+    lines += [f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} tcp dport {{ 22, 443 }} counter drop',
               f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {outbound} icmp type echo-request counter drop',
-              f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} tcp sport 22 ct direction reply counter drop',
+              f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} tcp sport {{ 22, 443 }} ct direction reply counter drop',
               f'add rule inet rabbitwall_filter {ACCESS_CHAIN} {inbound} icmp type echo-reply counter drop']
     return '\n'.join(lines) + '\n'
 

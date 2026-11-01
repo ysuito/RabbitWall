@@ -228,7 +228,7 @@ Even in NAT mode, the management PC needs a route to reach the AI subnet. In thi
 sudo ip route add 192.168.20.0/24 via 192.168.10.2
 ```
 
-Make the route persistent using your management PC's OS configuration. The generated firewall allows SSH and Ping from the configured management PC to monitored AI hosts. This additional route is not needed just to access the console.
+Make the route persistent using your management PC's OS configuration. The generated firewall controls SSH, HTTPS and Ping from the configured management PC to AI hosts according to their node permissions. This additional route is not needed just to access the console.
 
 ## 6. [RabbitWall host] Download IP-country data (optional)
 

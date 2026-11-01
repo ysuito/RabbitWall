@@ -22,8 +22,8 @@ DEFAULTS = {'schema_version': 1,
  'console_name': 'rabbitwall.home.arpa',
  'site_label': 'LAN拠点',
  'site_location': [139, 36],
- 'nodes': [{'id': 'gateway', 'label': 'Gateway', 'ip': '192.168.10.1', 'interface': 'eth0', 'monitor': True, 'allow_ssh': False, 'allow_ping': False},
-           {'id': 'ai-host', 'label': 'AI Host', 'ip': '192.168.20.10', 'interface': 'eth1', 'monitor': True, 'allow_ssh': True, 'allow_ping': True}]}
+ 'nodes': [{'id': 'gateway', 'label': 'Gateway', 'ip': '192.168.10.1', 'interface': 'eth0', 'monitor': True, 'allow_ssh': False, 'allow_ping': False, 'allow_https': False},
+           {'id': 'ai-host', 'label': 'AI Host', 'ip': '192.168.20.10', 'interface': 'eth1', 'monitor': True, 'allow_ssh': True, 'allow_ping': True, 'allow_https': False}]}
 
 
 def interface(value):
@@ -73,7 +73,7 @@ def validate(data):
         raise ValueError('Configure 0–12 nodes')
     ids, addresses = {'rabbitwall', 'admin'}, {str(up.ip), str(ai.ip), result['admin_ip']}
     for node in data['nodes']:
-        if not isinstance(node, dict) or not {'id', 'label', 'ip', 'interface'} <= set(node) or set(node) - {'id', 'label', 'ip', 'interface', 'monitor', 'allow_ssh', 'allow_ping'}:
+        if not isinstance(node, dict) or not {'id', 'label', 'ip', 'interface'} <= set(node) or set(node) - {'id', 'label', 'ip', 'interface', 'monitor', 'allow_ssh', 'allow_ping', 'allow_https'}:
             raise ValueError('Each node requires id, label, ip and interface')
         if not isinstance(node['id'], str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', node['id']) or node['id'] in ids:
             raise ValueError('Node ids must be unique; rabbitwall and admin are reserved')
@@ -82,11 +82,11 @@ def validate(data):
         address = ipaddress.IPv4Address(node['ip'])
         if str(address) in addresses: raise ValueError('Node IPs must be unique')
         if node['interface'] not in (data['ai_if'], data['uplink_if']): raise ValueError('Node interface must match uplink_if or ai_if')
-        for flag in ('monitor', 'allow_ssh', 'allow_ping'):
-            default = True if flag == 'monitor' else node['interface'] == data['ai_if']
+        for flag in ('monitor', 'allow_ssh', 'allow_ping', 'allow_https'):
+            default = True if flag == 'monitor' else flag != 'allow_https' and node['interface'] == data['ai_if']
             if type(node.get(flag, default)) is not bool: raise ValueError(f'{flag} must be boolean')
             # Optional fields preserve the behavior of existing JSON configurations.
-        if node['interface'] == data['uplink_if'] and (node.get('allow_ssh', False) or node.get('allow_ping', False)):
+        if node['interface'] == data['uplink_if'] and (node.get('allow_ssh', False) or node.get('allow_ping', False) or node.get('allow_https', False)):
             raise ValueError('Management access applies only to AI-side nodes')
         node['ip'] = str(address)
         usable(node['ip'], ai.network if node['interface'] == data['ai_if'] else up.network)
@@ -118,7 +118,7 @@ def monitored(node):
 
 
 def management_allowed(node, kind, config=SETTINGS):
-    return node['interface'] == config['ai_if'] and node.get('allow_' + kind, True)
+    return node['interface'] == config['ai_if'] and node.get('allow_' + kind, kind != 'https')
 
 
 def metadata(config=SETTINGS):

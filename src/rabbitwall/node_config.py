@@ -24,6 +24,7 @@ def revision(config):
 def document(config):
     nodes = copy.deepcopy(config['nodes'])
     for node in nodes:
+        node.setdefault('allow_https', False)
         node.setdefault('monitor', True)
         node.setdefault('allow_ssh', node['interface'] == config['ai_if'])
         node.setdefault('allow_ping', node['interface'] == config['ai_if'])
@@ -37,9 +38,9 @@ def candidate(config, payload):
         raise ValueError('nodes and revision are required')
     if payload['revision'] != revision(config):
         raise RevisionConflict('Node settings changed; reload before saving')
-    required = {'id','label','ip','interface','monitor','allow_ssh','allow_ping'}
+    required = {'id','label','ip','interface','monitor','allow_ssh','allow_ping','allow_https'}
     if not isinstance(payload['nodes'], list) or any(not isinstance(node, dict) or set(node) != required for node in payload['nodes']):
-        raise ValueError('Each saved node needs explicit monitoring, SSH and Ping permissions')
+        raise ValueError('Each saved node needs explicit monitoring, SSH, HTTPS and Ping permissions')
     result = copy.deepcopy(config)
     result['nodes'] = payload['nodes']
     result = validate(result)

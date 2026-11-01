@@ -121,7 +121,7 @@ flowchart TB
 
 ## 5. Gate control and node health
 
-The web service sends fixed gate actions and validated node-only settings over a Unix socket. Node saves replace dedicated management-access and probe chains without touching the gate, NICs or DNS. Settings are backed up and atomically written per file to `/etc/rabbitwall-nodes/nodes.json` and the persistent firewall snippet; write failures attempt to restore files and live permissions. Monitoring and management SSH/Ping are independent. While open, a 20-second permission lease is renewed about every four seconds. Restart, table recreation or lease expiry does not automatically restore access. Health probes run about every ten seconds in a separate thread.
+The web service sends fixed gate actions and validated node-only settings over a Unix socket. Node saves replace dedicated management-access and probe chains without touching the gate, NICs or DNS. Settings are backed up and atomically written per file to `/etc/rabbitwall-nodes/nodes.json` and the persistent firewall snippet; write failures attempt to restore files and live permissions. Monitoring and management SSH/HTTPS/Ping are independent. While open, a 20-second permission lease is renewed about every four seconds. Restart, table recreation or lease expiry does not automatically restore access. Health probes run about every ten seconds in a separate thread.
 
 ```mermaid
 flowchart TB

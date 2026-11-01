@@ -14,7 +14,7 @@ RabbitWallの本番用ソースが起動する外部プログラムと、その�
 | control・起動／ノード保存 | `nft -j -a list ruleset` | 基本FWの構造、専用チェーン、ルール識別子、offloadの有無を参照 |
 | control・起動／開閉操作／開状態の約4秒ごとの更新 | `nft -f -` | 起動時はゲートを閉じて構成。開閉時は許可集合を更新。開状態の許可期限は20秒 |
 | control・約10秒ごと、監視有効な各ノード | `ping -n -c 1 -W 1 -I <IF> <IPv4>` | ICMPによる死活確認。監視無効のノードには実行しない |
-| control・ノード保存 | `nft -c -f -` → `nft -f -` | ノードのSSH・Ping許可と監視用ルールを検証して反映。NIC・DNS・開閉ゲートは再構成しない |
+| control・ノード保存 | `nft -c -f -` → `nft -f -` | ノードのSSH・HTTPS・Ping許可と監視用ルールを検証して反映。NIC・DNS・開閉ゲートは再構成しない |
 | control・ノード保存の復元処理 | `nft -f -` | 保存に失敗した場合、元のノード用ルールへの復元を試みる |
 
 発行箇所：[console.py](../src/rabbitwall/console.py)、[control.py](../src/rabbitwall/control.py)、[node_config.py](../src/rabbitwall/node_config.py)。生成するnftables文は [firewall.py](../src/rabbitwall/firewall.py) にあります。collectorの周期は変更可能です。スレッドによるノード確認には時間がかかるため、監視間隔は厳密な定周期ではありません。
