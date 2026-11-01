@@ -15,6 +15,20 @@
     if (kind === "drops") return COLORS.DROP;
     return COLORS[flow.service] || COLORS[({443:"HTTPS", 80:"HTTP", 53:"DNS", 22:"SSH"})[flow.dport]] || COLORS.OTHER;
   }
+  function byteLabel(value) {
+    if (value == null) return "通信量不明";
+    for (const unit of ["B", "KB", "MB", "GB", "TB"]) {
+      if (value < 1024 || unit === "TB") return value.toFixed(unit === "B" ? 0 : 1) + " " + unit;
+      value /= 1024;
+    }
+  }
+  function routeVisual(route, kind) {
+    if (kind !== "history") return {width:Math.min(2.2,.8+Math.log2(route.count+1)*.35), particles:1, period:4200};
+    // Logarithmic, fixed scale: 1 KB through 1 GB; cap drawing cost per route.
+    const volume = Math.min(1, Math.log2(1+(route.totalBytes || 0)/1024)/20);
+    return {width:.9+5.1*volume, particles:route.totalBytes > 0 ? 1+Math.floor(7*volume) : 0,
+      period:4200/(1+1.5*volume)};
+  }
   function groupFlows(flows, countries, kind = "flows", limit = 80) {
     const groups = new Map(), nodes = new Map();
     for (const flow of flows) {
@@ -26,10 +40,12 @@
       const group = groups.get(key);
       group.count++; group.flows.push(flow);
       group.animate = group.animate || (kind !== "drops" && !flow.ended_at);
-      if (flow.tx_bytes != null || flow.rx_bytes != null) group.totalBytes = (group.totalBytes || 0) + (flow.tx_bytes || 0) + (flow.rx_bytes || 0);
+      const counters = [flow.tx_bytes,flow.rx_bytes].filter(value => Number.isFinite(value) && value >= 0);
+      if (counters.length) group.totalBytes = (group.totalBytes || 0) + counters.reduce((sum,value)=>sum+value,0);
+      if (kind === "history") group.animate = group.totalBytes > 0;
       nodes.set(src.key, src); nodes.set(dst.key, dst);
     }
-    const all = [...groups.values()].sort((a,b) => b.count - a.count || (b.totalBytes || 0) - (a.totalBytes || 0) || a.key.localeCompare(b.key));
+    const all = [...groups.values()].sort((a,b) => (kind === "history" ? (b.totalBytes || 0) - (a.totalBytes || 0) : 0) || b.count - a.count || (b.totalBytes || 0) - (a.totalBytes || 0) || a.key.localeCompare(b.key));
     const visible = all.slice(0, limit), visibleNodes = new Map();
     for (const group of visible) { visibleNodes.set(group.src.key, group.src); visibleNodes.set(group.dst.key, group.dst); }
     return {routes:visible, nodes:[...visibleNodes.values()], totalRoutes:all.length, totalFlows:flows.length,
@@ -151,7 +167,7 @@
     paintSummary() {
       const model = this.model;
       this.summary.textContent = `${({flows:"現況",history:"履歴",drops:"拒否"})[this.kind]} · ${model.totalFlows} 件 · ${model.countryCount} か国 · ${model.routes.length}/${model.totalRoutes} 経路` +
-        (this.stale ? " · 更新停止中" : "") + (this.mapError ? " · 地図データを読み込めません" : "");
+        (this.kind === "history" ? " · 線幅・光＝累積通信量" : "") + (this.stale ? " · 更新停止中" : "") + (this.mapError ? " · 地図データを読み込めません" : "");
     }
     paintList() {
       const focused=document.activeElement?.dataset?.routeKey;
@@ -163,7 +179,7 @@
         button.setAttribute("aria-pressed", String(route.key === this.selected));
         const line = document.createElement("strong"), sub = document.createElement("small");
         line.textContent = route.src.label + " → " + route.dst.label;
-        sub.textContent = `${route.service} · ${route.count} セッション`;
+        sub.textContent = `${route.service} · ${route.count} セッション` + (this.kind === "history" ? " · " + byteLabel(route.totalBytes) : "");
         const names = [...new Set(route.flows.flatMap(f => (f.domain_hints || []).map(h => h.domain)))];
         if (names.length) sub.textContent += " · 推定: " + names.slice(0, 2).join(" / ");
         if (route.flows.some(f => (f.domain_hints || []).some(h => h.is_new))) {
@@ -183,6 +199,10 @@
       this.detail.hidden=!route;this.onSelectionChange(route?.key || null);
       if (!route) return;
       const title=document.createElement("strong"); title.textContent=route.src.label + " → " + route.dst.label; this.detail.append(title);
+      if (this.kind === "history") {
+        const volume=document.createElement("small"); volume.textContent="累積送受信量: " + byteLabel(route.totalBytes) + " / 線幅・光は対数スケールの演出";
+        this.detail.append(volume);
+      }
       for (const flow of route.flows.slice(0, 8)) {
         const line=document.createElement("code");
         line.textContent=`${flow.src}${flow.sport ? ":"+flow.sport : ""} → ${flow.dst}${flow.dport ? ":"+flow.dport : ""} · ${flow.state || flow.proto}`;
@@ -288,14 +308,17 @@
       for (const path of this.paths) {
         const {route,a,b,c}=path, highlighted=!this.selected || this.selected===route.key;
         ctx.globalAlpha=highlighted ? .78 : .12;ctx.strokeStyle=this.color(route.color);
-        ctx.lineWidth=this.selected===route.key ? 2.2 : Math.min(2.2,.8+Math.log2(route.count+1)*.35);
+        const visual=routeVisual(route,this.kind);
+        ctx.lineWidth=this.kind === "history" ? visual.width + (this.selected===route.key ? 1.3 : 0) : this.selected===route.key ? 2.2 : visual.width;
         ctx.shadowColor=this.color(route.color);ctx.shadowBlur=highlighted ? 5 : 0;
         ctx.setLineDash(this.kind === "drops" || !route.animate ? [3,5] : []);
         ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.quadraticCurveTo(b.x,b.y,c.x,c.y);ctx.stroke();ctx.setLineDash([]);
         if (moving && route.animate && highlighted) {
-          const t=((now/4200)+(hash(route.key)%1000)/1000)%1;
-          const point=quadratic(a,b,c,t);ctx.globalAlpha=.95;ctx.fillStyle=this.color(route.color);ctx.shadowBlur=13;
-          ctx.beginPath();ctx.arc(point.x,point.y,2.4,0,Math.PI*2);ctx.fill();
+          for(let index=0;index<visual.particles;index++) {
+            const t=((now/visual.period)+(hash(route.key)%1000)/1000+index/visual.particles)%1;
+            const point=quadratic(a,b,c,t);ctx.globalAlpha=.95;ctx.fillStyle=this.color(route.color);ctx.shadowBlur=13;
+            ctx.beginPath();ctx.arc(point.x,point.y,2.4,0,Math.PI*2);ctx.fill();
+          }
         }
         const tip=quadratic(a,b,c,.76), prior=quadratic(a,b,c,.73),angle=Math.atan2(tip.y-prior.y,tip.x-prior.x);
         ctx.fillStyle=this.color(route.color);ctx.beginPath();ctx.moveTo(tip.x,tip.y);ctx.lineTo(tip.x-6*Math.cos(angle-.45),tip.y-6*Math.sin(angle-.45));ctx.lineTo(tip.x-6*Math.cos(angle+.45),tip.y-6*Math.sin(angle+.45));ctx.closePath();ctx.fill();
@@ -352,5 +375,5 @@
   SessionAtlas.themes.red={"#0b2424":"#35151e","#030908":"#10060b","#1b3c37":"#502633","#102c27":"#3e1d2a","#356653":"#824758","#07110fef":"#1c0a12ef","#df8a36":"#dc7b94","#fca132":"#ffadc2","#e58b2e":"#ed8da6","#ed9630":"#f59ab0","#ffb148":"#ffbed0","#92a593":"#c7a6ae","#637b68":"#906976","#8eac93":"#cfadb7"};
   SessionAtlas.themes.white={"#0b2424":"#f7fbfd","#030908":"#e7eff3","#1b3c37":"#ccdbe1","#102c27":"#d5e3e7","#356653":"#95b2bd","#07110fef":"#ffffffef","#df8a36":"#567b90","#fca132":"#285e7f","#e58b2e":"#50798c","#ed9630":"#315e76","#ffb148":"#24556e","#92a593":"#516c7a","#637b68":"#6f828c","#8eac93":"#496776","#11100b":"#ffffff","#53967a99":"#528e8099","#63dfbb":"#187c65","#7e9fae":"#526774","#bddfcb":"#254b59","#c5a671":"#805b28","#54e0bd":"#187c65","#a89cef":"#7050a8","#ffa42a":"#a35b0c","#7fa4d8":"#416b9c","#ff483e":"#b92f38"};
   root.SessionAtlas = SessionAtlas;
-  if (typeof module !== "undefined" && module.exports) module.exports = {endpointNode,groupFlows,quadratic,routeColor,projection,unwrapRing,pacificInset,toggledSelection,SessionAtlas};
+  if (typeof module !== "undefined" && module.exports) module.exports = {routeVisual,byteLabel,endpointNode,groupFlows,quadratic,routeColor,projection,unwrapRing,pacificInset,toggledSelection,SessionAtlas};
 })(typeof window !== "undefined" ? window : globalThis);

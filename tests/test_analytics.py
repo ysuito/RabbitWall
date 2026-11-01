@@ -126,6 +126,42 @@ class Analytics(unittest.TestCase):
         self.assertEqual(data['windows']['24h']['tx_bytes'], 0)
         self.assertEqual(data['known_domain_count'], 1)
 
+    def test_hourly_rollup_preserves_long_totals_without_double_counting(self):
+        self.collect([], 0)
+        for offset, tx in [(0, 10), (60, 20), (86400+3600, 40)]:
+            self.db.execute('INSERT INTO traffic_minutes VALUES (?,?,?,?,?,?)',
+                            (int(BASE+offset), '10.1.0.10', '1.1.1.1', '["example.com"]', tx, tx*2))
+        data = self.collect([], 2*86400)
+        self.assertEqual(data['windows']['24h']['tx_bytes'], 40)
+        self.assertEqual(data['windows']['7d']['tx_bytes'], 70)
+        self.assertEqual(data['windows']['30d']['rx_bytes'], 140)
+        self.assertEqual(data['windows']['30d']['by_domain'][0]['tx_bytes'], 70)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM traffic_hours').fetchone()[0], 1)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM traffic_minutes').fetchone()[0], 1)
+        again = self.collect([], 2*86400+5)
+        self.assertEqual(again['windows']['30d']['tx_bytes'], 70)
+        self.assertEqual(again['windows']['30d']['resolution_seconds'], 3600)
+        data = self.collect([], 8*86400)
+        self.assertEqual(data['windows']['7d']['tx_bytes'], 40)
+        self.assertEqual(data['windows']['30d']['tx_bytes'], 70)
+        data = self.collect([], 33*86400)
+        self.assertEqual(data['windows']['30d']['tx_bytes'], 0)
+        self.assertEqual(self.db.execute('SELECT COUNT(*) FROM traffic_hours').fetchone()[0], 0)
+
+    def test_long_window_cutoff_and_existing_minute_data(self):
+        analytics.schema(self.db, BASE)
+        self.db.execute("DELETE FROM analytics_meta WHERE key='long_since'")
+        self.db.execute('INSERT INTO traffic_minutes VALUES (?,?,?,?,?,?)',
+                        (int(BASE-3600), '10.1.0.10', '1.1.1.1', '[]', 11, 22))
+        data = self.collect([], 0)
+        self.assertEqual(data['windows']['30d']['available_since'], BASE-3600)
+        data = self.collect([], 7*86400-3600)
+        self.assertEqual(data['windows']['7d']['tx_bytes'], 11)
+        data = self.collect([], 7*86400-3599)
+        self.assertEqual(data['windows']['7d']['tx_bytes'], 0)
+        self.assertEqual(data['windows']['30d']['tx_bytes'], 11)
+        self.assertEqual(data['windows']['30d']['available_since'], BASE-3600)
+
     def test_collector_pipeline_and_restart_keep_baseline_and_annotations(self):
         import console
         raw = "tcp 6 100 ESTABLISHED src=10.1.0.10 dst=1.1.1.1 sport=12345 dport=443 bytes=100 src=1.1.1.1 dst=10.1.0.10 sport=443 dport=12345 bytes=200 id=9"

@@ -9,7 +9,7 @@
 - **析 — Analytics:** traffic rankings and newly observed domains.
 - **設 — Settings:** color scheme and the status of the IP-country database.
 
-Sessions are collected about every five seconds; nodes are checked with Ping about every ten seconds. Short connections that finish between observations may not appear. Map animation indicates that a connection exists, not packet counts or transfer speed.
+Sessions are collected about every five seconds; nodes are checked with Ping about every ten seconds. Short connections that finish between observations may not appear. In the current view, moving lights indicate observed sessions. In History, thicker lines, more lights and more frequent movement indicate greater cumulative sent-plus-received bytes, including ended sessions. This uses a capped logarithmic scale, not real-time speed or packet counts. Unknown byte counts remain thin and static; pausing animation or stale data stops movement. History remains limited to the displayed session records (up to 500), independently of analytics periods.
 
 Node status labels are **正** (healthy), **断** (no Ping response), **不** (unable to check), and **古** (monitoring data is stale). A host configured not to respond to Ping can appear as **断** even while running.
 
@@ -55,15 +55,15 @@ Known domains persist across restarts. The catalog is limited to 100,000 names. 
 
 ## Traffic rankings
 
-Traffic from the AI network to public IPv4 addresses is ranked over the last hour or 24 hours, by destination IP or inferred domain, and by sent, received or total bytes. The console displays the top 20 entries. Management SSH/HTTPS, RabbitWall's own traffic and local DNS are excluded.
+Traffic from the AI network to public IPv4 addresses is ranked over the last hour, 24 hours, 7 days or 30 days, by destination IP or inferred domain, and by sent, received or total bytes. The console displays the top 20 entries. Management SSH/HTTPS, RabbitWall's own traffic and local DNS are excluded.
 
-About every five seconds, differences are taken from cumulative conntrack counters and stored in one-minute buckets. The same cumulative value is not repeatedly added. The first observation establishes a baseline; a decrease in counters or a collection gap longer than 30 seconds also resets the baseline.
+About every five seconds, differences are taken from cumulative conntrack counters and stored in one-minute buckets. Complete hours older than one day are compacted into hourly totals, retained for 30 days. The 7/30-day windows round their starting boundary up to a full hour; the UI shows the available starting time. Existing retained data is used after an update, but previously deleted traffic cannot be recovered. The same cumulative value is not repeatedly added. The first observation establishes a baseline; a decrease in counters or a collection gap longer than 30 seconds also resets the baseline.
 
 When there is one candidate domain, multiple IPs for that name are grouped together. Traffic with multiple candidates is grouped by IP as “multiple candidates,” without counting its bytes against every candidate. Bytes transferred before the first observation, after the last observation, during collection gaps or by connections ending between observations are omitted. These figures are not precise billing measurements.
 
 ## Storage and capacity
 
-Session history, known domains and traffic data are stored in `/var/lib/rabbitwall/history.sqlite3`. Ended sessions are retained for 24 hours, with an approximate overall target of 20,000 entries. Traffic data covers the last 24 hours. The known-domain catalog is not subject to session-history expiry. The database is updated with each collection transaction; monitor free space and write volume in your environment.
+Session history, known domains and traffic data are stored in `/var/lib/rabbitwall/history.sqlite3`. Ended sessions are retained for 24 hours, with an approximate overall target of 20,000 entries. Traffic aggregates cover up to 30 days; older minute data is compacted into hourly totals. The known-domain catalog is not subject to session-history expiry. The database is updated with each collection transaction; monitor free space and write volume in your environment.
 
 Rejection logs show up to 200 kernel journal entries from the last five minutes. Firewall log rate limits and rules that reject without logging mean that this is not a count of all rejected packets.
 

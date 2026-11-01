@@ -219,7 +219,7 @@ function renderAnalytics() {
   const data = snapshot.analytics;
   const windowData = data?.windows?.[$("ranking-window").value];
   $("ranking-rows").replaceChildren(); $("new-domain-rows").replaceChildren();
-  $("ranking-period").textContent = data ? "集計開始 " + timestampText(data.since) : "収集サービスを更新してください";
+  $("ranking-period").textContent = data ? "集計対象 " + timestampText(windowData?.available_since ?? data.since) + " 以降" : "収集サービスを更新してください";
   $("ranking-tx").textContent = bytes(windowData?.tx_bytes);
   $("ranking-rx").textContent = bytes(windowData?.rx_bytes);
   const coverage = data?.coverage;

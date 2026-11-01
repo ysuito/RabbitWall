@@ -79,9 +79,10 @@ flowchart TB
     Collect --> Analytics["collect_analytics()"]
     Analytics --> Schema["schema() → register_domains()"]
     Schema --> Sample["sample_traffic()"]
-    Sample --> Summary["summarize() → rankings()"]
+    Sample --> Compact["compact_traffic(): minutes → hours / 30 days"]
+    Compact --> Summary["summarize() → rankings(): 1h / 24h / 7d / 30d"]
     Summary --> Commit["Annotate first_seen / commit"]
-    Commit --> DB2[("known_domains / traffic_samples / traffic_minutes")]
+    Commit --> DB2[("known_domains / traffic_samples / traffic_minutes / traffic_hours")]
     Cmd --> Journal["journalctl -k → parse_journal()"]
     Hist --> State["atomic_json()"]
     Commit --> State
@@ -272,7 +273,7 @@ Helpers and methods are included; constructors and generated code are omitted. S
 
 ### [src/rabbitwall/traffic_analytics.py](../src/rabbitwall/traffic_analytics.py)
 
-`schema()`, `public_ai()`, `names_of()`, `counter()`, `register_domains()`, `sample_traffic()`, `rankings()`, `rankings.serialize()`, `summarize()`, `collect_analytics()`
+`schema()`, `public_ai()`, `names_of()`, `counter()`, `register_domains()`, `sample_traffic()`, `compact_traffic()`, `rankings()`, `rankings.serialize()`, `summarize()`, `collect_analytics()`
 
 ### [src/rabbitwall/unbound_config.py](../src/rabbitwall/unbound_config.py)
 

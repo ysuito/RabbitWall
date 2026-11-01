@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const {groupFlows, quadratic, routeColor, projection, unwrapRing, pacificInset, toggledSelection, SessionAtlas} = require("../src/rabbitwall/static/atlas.js");
+const {routeVisual,byteLabel,groupFlows, quadratic, routeColor, projection, unwrapRing, pacificInset, toggledSelection, SessionAtlas} = require("../src/rabbitwall/static/atlas.js");
 const world = JSON.parse(fs.readFileSync(path.join(__dirname,"../src/rabbitwall/static/world.json"), "utf8"));
 const privateIP = {kind:"private",code:null}, us = {kind:"country",code:"US"};
 const flow = {src:"10.1.0.10",dst:"8.8.8.8",sport:50000,dport:443,proto:"TCP",service:"HTTPS",state:"ESTABLISHED",
@@ -36,8 +36,8 @@ const many=Array.from({length:100},(_,i)=>({...flow,dport:10000+i}));
 const capped=groupFlows(many,world.countries,"flows",80);
 assert.equal(capped.routes.length,80);assert.equal(capped.totalRoutes,100);assert.equal(capped.totalFlows,100);
 
-// Finished history and denied attempts do not produce moving session particles.
-assert.equal(groupFlows([{...flow,ended_at:"2026-10-26T00:00:00Z"}],world.countries,"history").routes[0].animate,false);
+// History replays volume even for ended sessions; rejected attempts stay static.
+assert.equal(groupFlows([{...flow,ended_at:"2026-10-26T00:00:00Z"}],world.countries,"history").routes[0].animate,true);
 assert.equal(groupFlows([flow],world.countries,"drops").routes[0].animate,false);
 assert.equal(groupFlows([],world.countries).routes.length,0);
 const noAccounting=groupFlows([{...flow,tx_bytes:null,rx_bytes:null}],world.countries);
@@ -131,3 +131,21 @@ zoom.wheelZoom({...wheel,deltaY:-1,deltaMode:1});assert.ok(zoom.zoom>1);
 zoom.wheelZoom({...wheel,deltaY:-1,deltaMode:2});assert.ok(zoom.zoom>2);
 zoom.resetPosition();assert.equal(zoom.zoom,1);assert.deepEqual(zoom.offset,{x:0,y:0});
 console.log('Session atlas: cursor-anchored wheel zoom, bounds, zoomed selection/drag, wheel units, browser shortcuts and reset passed.');
+
+// Historical volume controls width, particle density and repetition with bounded costs.
+const tiny=routeVisual({count:1,totalBytes:1024},"history");
+const huge=routeVisual({count:1,totalBytes:1024**3},"history");
+assert.ok(huge.width>tiny.width && huge.particles>tiny.particles && huge.period<tiny.period);
+assert.ok(huge.width<=6 && huge.particles<=8);
+assert.deepEqual(routeVisual({count:1,totalBytes:Number.MAX_VALUE},"history"),huge);
+for(const totalBytes of [null,0]){
+  const style=routeVisual({count:1,totalBytes},"history");assert.equal(style.particles,0);
+}
+const historical=groupFlows([{...flow,tx_bytes:1024,rx_bytes:0,ended_at:"ended"},
+  {...flow,dport:80,service:"HTTP",tx_bytes:1024**3,rx_bytes:0,ended_at:"ended"}],world.countries,"history",1);
+assert.equal(historical.routes[0].service,"HTTP");assert.equal(historical.routes[0].animate,true);
+assert.equal(groupFlows([{...flow,tx_bytes:null,rx_bytes:null}],world.countries,"history").routes[0].animate,false);
+assert.equal(groupFlows([{...flow,tx_bytes:-1,rx_bytes:NaN}],world.countries,"history").routes[0].totalBytes,null);
+assert.equal(byteLabel(null),"通信量不明");assert.equal(byteLabel(1024**3),"1.0 GB");
+assert.deepEqual(routeVisual({count:1,totalBytes:1},"flows"),routeVisual({count:1,totalBytes:1024**3},"flows"));
+console.log("Session atlas: historical byte volume controls bounded line width, particle count, period and route priority.");

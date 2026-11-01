@@ -7,6 +7,7 @@ from settings import AI_INTERFACE
 
 DOMAIN_LIMIT = 100000
 DAY = 86400
+WINDOWS = (("1h", 3600), ("24h", DAY), ("7d", 7*DAY), ("30d", 30*DAY))
 
 
 def schema(db, now):
@@ -26,6 +27,13 @@ def schema(db, now):
         if statement.strip():
             db.execute(statement)
     db.execute("INSERT OR IGNORE INTO analytics_meta VALUES ('since',?)", (now,))
+    db.execute("""CREATE TABLE IF NOT EXISTS traffic_hours
+                  (hour INTEGER, client TEXT, destination TEXT, domains TEXT,
+                   tx INTEGER NOT NULL, rx INTEGER NOT NULL,
+                   PRIMARY KEY(hour,client,destination,domains))""")
+    # Existing minute samples remain usable; already expired data cannot be recovered.
+    db.execute("""INSERT OR IGNORE INTO analytics_meta
+                  SELECT 'long_since',COALESCE(MIN(minute),?) FROM traffic_minutes""", (now,))
 
 
 def public_ai(flow):
@@ -129,15 +137,36 @@ def rankings(rows):
             'tx_bytes': sum(row[3] for row in rows), 'rx_bytes': sum(row[4] for row in rows)}
 
 
+def compact_traffic(db, now):
+    # Move complete hours older than a day exactly once, in the collector transaction.
+    cutoff = int((now-DAY)//3600)*3600
+    db.execute("""INSERT INTO traffic_hours
+        SELECT (minute/3600)*3600,client,destination,domains,SUM(tx),SUM(rx)
+        FROM traffic_minutes WHERE minute<? GROUP BY 1,2,3,4
+        ON CONFLICT(hour,client,destination,domains) DO UPDATE SET
+        tx=tx+excluded.tx,rx=rx+excluded.rx""", (cutoff,))
+    db.execute('DELETE FROM traffic_minutes WHERE minute<?', (cutoff,))
+    db.execute('DELETE FROM traffic_hours WHERE hour<?', (now-30*DAY,))
+
+
 def summarize(db, now, coverage, limit_reached=False):
     windows = {}
-    for name, duration in [('1h', 3600), ('24h', DAY)]:
-        # Whole minute buckets; cutoff rounded up so old buckets are not counted again.
-        cutoff = math.ceil((now-duration)/60)*60
+    for name, duration in WINDOWS:
+        # Round up to a complete bucket at the selected window resolution.
+        resolution = 3600 if duration > DAY else 60
+        cutoff = math.ceil((now-duration)/resolution)*resolution
         rows = db.execute('''SELECT client,destination,domains,SUM(tx),SUM(rx)
                              FROM traffic_minutes WHERE minute>=? AND minute<=?
                              GROUP BY client,destination,domains''', (cutoff, now)).fetchall()
+        if duration > DAY:
+            rows += db.execute("""SELECT client,destination,domains,SUM(tx),SUM(rx)
+                                  FROM traffic_hours WHERE hour>=? AND hour<=?
+                                  GROUP BY client,destination,domains""", (cutoff, now)).fetchall()
         windows[name] = rankings(rows)
+        since_key = 'long_since' if duration > DAY else 'since'
+        since = db.execute('SELECT value FROM analytics_meta WHERE key=?', (since_key,)).fetchone()[0]
+        windows[name]['available_since'] = max(cutoff, since)
+        windows[name]['resolution_seconds'] = resolution
     recent = db.execute('SELECT name,first_seen,last_seen FROM known_domains WHERE first_seen>? '
                         'ORDER BY first_seen DESC,name LIMIT 100', (now-DAY,)).fetchall()
     return {'since': db.execute("SELECT value FROM analytics_meta WHERE key='since'").fetchone()[0],
@@ -153,7 +182,7 @@ def collect_analytics(db, flows, records, now, history=()):
     limited = register_domains(db, records, flows or [], timestamp)
     coverage = sample_traffic(db, flows, timestamp) if flows is not None else {'tracked': 0, 'missing': 0}
     coverage['available'] = flows is not None
-    db.execute('DELETE FROM traffic_minutes WHERE minute < ?', (timestamp-DAY,))
+    compact_traffic(db, timestamp)
     # Domains persist across restarts and session-history expiry. No automatic catalogue eviction.
     for flow in list(flows or []) + list(history):
         for hint in flow.get('domain_hints', []):
