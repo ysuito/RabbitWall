@@ -8,6 +8,7 @@ from settings import validate
 
 DNSTAP_SOCKET = Path('/run/rabbitwall-dns/dnstap.sock')
 CONFIG_PATH = Path('/etc/rabbitwall-unbound.conf')
+POLICY_FILE = Path('/etc/rabbitwall-domain-policy/policy.conf')
 
 
 def render(config, dnstap_socket=DNSTAP_SOCKET):
@@ -38,7 +39,7 @@ server:
     log-replies: no
     hide-identity: yes
     hide-version: yes
-    module-config: "iterator"
+    module-config: "respip iterator"
     num-threads: 1
     num-queries-per-thread: 128
     outgoing-range: 256
@@ -52,7 +53,10 @@ server:
     edns-buffer-size: 1232
     auto-trust-anchor-file: ""
 remote-control:
-    control-enable: no
+    control-enable: yes
+    control-interface: "{Path(path).parent / 'control.sock'}"
+    control-use-cert: no
+include-toplevel: "{POLICY_FILE}"
 forward-zone:
     name: "."
     forward-addr: {c['dns_upstream']}
@@ -71,7 +75,7 @@ dnstap:
 
 
 def require_unbound():
-    if not shutil.which('unbound') or not shutil.which('unbound-checkconf'):
+    if not shutil.which('unbound') or not shutil.which('unbound-checkconf') or not shutil.which('unbound-control'):
         raise ValueError('Install unbound with dnstap support')
     result = subprocess.run(['unbound', '-V'], capture_output=True, text=True, timeout=10)
     if result.returncode or '--enable-dnstap' not in result.stdout + result.stderr:
@@ -80,7 +84,9 @@ def require_unbound():
 
 def check_config(text):
     with tempfile.NamedTemporaryFile(mode='w', suffix='.conf') as temporary:
-        temporary.write(text)
+        # Bootstrap config is validated separately from the generated live RPZ
+        # include. DNSGuard validates the complete on-disk config before reload.
+        temporary.write(text.replace(f'include-toplevel: "{POLICY_FILE}"', ''))
         temporary.flush()
         result = subprocess.run(['unbound-checkconf', temporary.name],
                                 capture_output=True, text=True, timeout=10)

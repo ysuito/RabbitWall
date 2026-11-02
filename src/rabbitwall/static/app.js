@@ -43,7 +43,7 @@ function direction(flow) {
   return flow.scope === "MANAGEMENT" ? rabbitwall ? "LAN → RabbitWall" : "LAN → AI" : flow.scope === "RABBITWALL" ? "RabbitWall発信" : rabbitwall ? "AI → RabbitWall" : "AI → 上流";
 }
 function navigate() {
-  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析"};
+  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析",approvals:"ドメイン一時許可"};
   const page = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : "monitor";
   for (const element of document.querySelectorAll("[data-page]")) element.hidden = element.dataset.page !== page;
   for (const link of document.querySelectorAll("[data-nav]")) {
@@ -58,6 +58,7 @@ function navigate() {
     $(page==="monitor" ? "map-controls" : "list-controls").append($("session-controls"));
     for(const name of ["map","table"]){$("view-"+name).classList.toggle("selected",sessionView===name);$("view-"+name).setAttribute("aria-pressed",String(sessionView===name));}
   }
+  if(page==="approvals")loadApprovalNodes();
   if(page==="settings" && !nodeBusy && !nodeDirty)loadNodeSettings();
   atlas.setActive(page === "monitor");
   render();
@@ -84,19 +85,20 @@ function cell(row, value, className = "") {
 }
 function renderGateTimer() {
   const known = control?.available && !control.error;
-  const remaining = known && control.enabled ? control.remaining_seconds : null;
+  const remaining = known && control.enabled ? control.mode === "restricted"
+    ? (control.domain_approvals?.length ? Math.min(...control.domain_approvals.map(grant=>grant.remaining_seconds)) : null) : control.remaining_seconds : null;
   const seconds = remaining == null ? null : Math.max(0, Math.ceil(remaining - (performance.now() - controlReceivedAt) / 1000));
   $("gate-timer").textContent = seconds !== null
-    ? seconds > 0 ? `自動遮断まで ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2,"0")}秒` : "期限到達・遮断状態を確認中"
+    ? seconds > 0 ? `${control?.mode === "restricted" ? "次の期限まで" : "自動遮断まで"} ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2,"0")}秒` : "期限到達・遮断状態を確認中"
     : "";
   $("gate-timer").hidden = seconds === null;
 }
 function renderControl() {
   const known = control && control.available && !control.error;
-  const state = known ? control.enabled ? "online" : "offline" : "unknown";
+  const state = known ? control.mode === "restricted" ? "restricted" : control.enabled ? "online" : "offline" : "unknown";
   $("gate-panel").dataset.state=state;
   $("gate-panel").setAttribute("aria-busy",String(controlBusy));
-  $("gate-state").textContent = known ? control.enabled ? "開" : "閉" : "不明";
+  $("gate-state").textContent = known ? control.mode === "restricted" ? "限" : control.enabled ? "開" : "閉" : "不明";
   $("gate-state").className = "gate-state " + state;
   $("internet-toggle").disabled=controlBusy || !controlAuthorized;
   $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && control.enabled)));
@@ -122,6 +124,7 @@ function renderControl() {
   }
   if (!(control?.nodes || []).length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "監視データはまだありません。"; $("nodes").append(p); }
   updateNodeButtons();
+  renderApprovals();
   if (snapshot) snapshot.control = control;
 }
 async function refreshControl() {
@@ -140,6 +143,7 @@ async function refreshControl() {
 }
 async function setInternet(enabled, duration_seconds = null) {
   if (controlBusy) return;
+  if(enabled && control?.mode === "restricted" && !window.confirm("ドメイン限定許可を破棄し、AIセグメント全体を開通します。続行しますか？"))return;
   controlBusy = true; controlEpoch++; renderControl(); $("control-message").textContent = "通信状態を変更しています…";
   try {
     const response = await fetch("/api/internet", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(duration_seconds === null ? {enabled} : {enabled, duration_seconds}), signal:AbortSignal.timeout(10000)});
@@ -399,3 +403,55 @@ $("node-form").addEventListener("submit",async event=>{
 document.querySelectorAll("[data-duration]").forEach(button => button.addEventListener("click", () => setInternet(true, Number(button.dataset.duration))));
 
 setInterval(renderGateTimer, 1000);
+
+
+async function loadApprovalNodes() {
+  try {
+    const response=await fetch("/api/nodes",{cache:"no-store",signal:AbortSignal.timeout(8000)});
+    const data=await response.json();if(!response.ok)throw new Error(data.error || "ノードを取得できません");
+    const select=$("approval-node"),previous=select.value;
+    select.replaceChildren();
+    const ai=data.settings.interfaces.find(item=>item.side==="AI")?.name;
+    for(const node of data.settings.nodes.filter(node=>node.interface===ai)){
+      const option=document.createElement("option");option.value=node.id;option.textContent=node.label+" / "+node.ip;select.append(option);
+    }
+    if([...select.options].some(option=>option.value===previous))select.value=previous;
+    $("approval-message").textContent=select.options.length ? "" : "環境設定でAI側ノードを登録してください。";
+    renderApprovals();
+  } catch(error){$("approval-message").textContent=error.message;}
+}
+function renderApprovals(){
+  $("approval-mode").textContent=control?.mode === "restricted" ? "限 / 限定許可" : control?.enabled ? "開 / 全体開通" : "閉";
+  $("approval-submit").disabled=controlBusy || !controlAuthorized || !$("approval-node").options.length;
+  const list=$("approval-list");list.replaceChildren();
+  for(const grant of control?.domain_approvals || []){
+    const entry=document.createElement("article");entry.className="approval-entry";
+    const title=document.createElement("h3");title.textContent=grant.node_name+" / "+grant.source;
+    const purpose=document.createElement("p");purpose.textContent=grant.purpose;
+    const until=document.createElement("p");until.textContent="期限: "+new Date(grant.expires_at).toLocaleString("ja-JP",{hour12:false});
+    const records=document.createElement("ul");
+    for(const record of grant.records || []){
+      const line=document.createElement("li");line.textContent=record.domain+" → "+(record.addresses.length ? record.addresses.join(", ") : record.error || "DNSを確認中・通信は未許可");records.append(line);
+    }
+    const revoke=document.createElement("button");revoke.type="button";revoke.className="secondary";revoke.textContent="許可を取り消す";
+    revoke.disabled=controlBusy || !controlAuthorized;revoke.addEventListener("click",()=>changeDomains("revoke",{id:grant.id}));
+    entry.append(title,purpose,until,records,revoke);list.append(entry);
+  }
+  if(!list.children.length){const empty=document.createElement("p");empty.textContent="有効な限定許可はありません。";list.append(empty);}
+}
+async function changeDomains(action,request){
+  if(controlBusy)return;
+  controlBusy=true;controlEpoch++;renderControl();$("approval-message").textContent="DNSとFirewallの許可を更新しています…";
+  try {
+    const response=await fetch("/api/domain-approvals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,request}),signal:AbortSignal.timeout(30000)});
+    const data=await response.json();if(!response.ok)throw new Error(data.error || "操作に失敗しました");
+    control=data.control;controlReceivedAt=performance.now();controlDemo=data.demo;
+    $("approval-message").textContent=controlDemo ? "試験表示：実際の通信許可やDNS照会は行っていません。" : action==="approve" ? "限定許可を反映しました。解決済みIPだけが接続可能になります。" : "許可を取り消しました。";
+  } catch(error){$("approval-message").textContent="結果を確認できません。再確認してください。"+error.message;}
+  finally{controlBusy=false;controlEpoch++;renderControl();}
+}
+$("approval-form").addEventListener("submit",event=>{
+  event.preventDefault();
+  const domains=$("approval-domains").value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
+  changeDomains("approve",{node_id:$("approval-node").value,domains,duration_seconds:Number($("approval-duration").value),purpose:$("approval-purpose").value});
+});

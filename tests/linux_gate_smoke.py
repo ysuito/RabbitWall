@@ -312,6 +312,8 @@ except OSError: print("blocked",flush=True)
                 assert time.monotonic()<deadline
                 time.sleep(.02)
             return process
+        from unbound_config import POLICY_FILE
+        POLICY_FILE.parent.mkdir(parents=True,exist_ok=True);POLICY_FILE.write_text('')
         process=start_controller()
         doc=control.request_control('nodes')
         timed = control.request_control('enable', payload=60)

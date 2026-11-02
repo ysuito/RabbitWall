@@ -133,3 +133,18 @@ See [systemd/](../systemd/) for definitions. The demo uses the Python running `s
 | `/run/rabbitwall-dns/dnstap.sock` | Copies DNS responses from Unbound to the observer. Both run as `rabbitwall-dns`; socket mode `0600`. Observer absence/slowness does not directly stop DNS forwarding |
 
 Both channels stay on the host, require no additional externally reachable TCP listener and use filesystem ownership/group permissions to limit connections. The control service also records peer PID/UID/GID for gate changes and node saves as audit information. Unix sockets do not replace external authentication: management-PC traffic is protected separately by Caddy HTTPS/mTLS.
+
+
+## 8. Temporary domain approvals [RabbitWall host]
+
+The root controller additionally runs these fixed commands from `unbound_guard.py`:
+
+| Command | Purpose |
+| --- | --- |
+| `unbound-checkconf /etc/rabbitwall-unbound.conf` | Validate the complete generated per-client RPZ configuration before applying |
+| `unbound-control -c /etc/rabbitwall-unbound.conf reload` | Reload approved exact names, or remove restrictions before full-open |
+| `unbound-control -c /etc/rabbitwall-unbound.conf list_auth_zones` | Wait for asynchronous RPZ loading to complete |
+| `unbound-control -c /etc/rabbitwall-unbound.conf flush_zone .` | Clear cached responses after a policy change |
+| `nft -f -` | Refresh domain-source DNS leases and `(source IP, destination IP)` TCP 80/443 leases, roughly every 0.5 seconds while restricted |
+
+Unbound control uses `/run/rabbitwall-dns/control.sock` (Unix socket, DNS group access), with no TCP control listener. The controller joins `rabbitwall-dns`. Approved-name resolution uses dnspython directly, not `dig`. Node saves cancel active domain grants and clear their DNS policy. See [domain approvals](DOMAIN_APPROVALS.md).

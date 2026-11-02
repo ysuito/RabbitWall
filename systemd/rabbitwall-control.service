@@ -12,13 +12,14 @@ Restart=on-failure
 RestartSec=3
 User=root
 Group=rabbitwall-control
+SupplementaryGroups=rabbitwall-dns
 RuntimeDirectory=rabbitwall
 RuntimeDirectoryMode=0750
 UMask=0027
 Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/rabbitwall-nodes /etc/nftables.d
+ReadWritePaths=/etc/rabbitwall-nodes /etc/nftables.d /etc/rabbitwall-domain-policy
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelTunables=yes

@@ -20,6 +20,7 @@ import time
 
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, monitored, NODES_CONFIG
 import node_config
+import domain_approvals
 
 SOCKET = Path("/run/rabbitwall/control.sock")
 TOKEN = Path("/etc/rabbitwall/control.token")
@@ -52,13 +53,13 @@ def validate_duration(enabled, duration):
 
 
 def request_control(action, path=SOCKET, payload=None):
-    if action not in {"status", "enable", "disable", "nodes", "save_nodes"}:
+    if action not in {"status", "enable", "disable", "nodes", "save_nodes", "approve_domains", "revoke_domain"}:
         raise ValueError("unsupported action")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(15 if action == "save_nodes" else 4)
+        client.settimeout(25 if action in {"save_nodes","approve_domains","revoke_domain"} else 4)
         client.connect(str(path))
         request = {"action":action}
-        if action == "save_nodes" or (action == "enable" and payload is not None): request["payload"] = payload
+        if action in {"save_nodes","approve_domains","revoke_domain"} or (action == "enable" and payload is not None): request["payload"] = payload
         client.sendall((json.dumps(request) + "\n").encode())
         chunks = bytearray()
         while b"\n" not in chunks:
@@ -66,7 +67,7 @@ def request_control(action, path=SOCKET, payload=None):
             if not part:
                 raise RuntimeError("controller closed connection")
             chunks.extend(part)
-            if len(chunks) > 65536:
+            if len(chunks) > 1048576:
                 raise RuntimeError("controller response too large")
         data = json.loads(chunks.split(b"\n", 1)[0])
         if not data.get("ok"):
@@ -90,7 +91,8 @@ def read_gate():
                    or chains.get(name, {}).get("prio") != -10 for name in ("input", "output"))
             or not {"dns_request", "dns_reply"}.issubset(chains)):
         raise RuntimeError("gate structure differs; reinstall required")
-    return {"handle": table["handle"], "enabled": bool(enabled.get("elem"))}
+    domain_sources = next(item['set'] for item in objects if item.get('set',{}).get('name')=='domain_sources')
+    return {"handle": table["handle"], "enabled": bool(enabled.get("elem")), "restricted":bool(domain_sources.get('elem'))}
 
 
 def baseline():
@@ -119,7 +121,7 @@ def install_runtime():
 
 
 def apply_enabled(enabled, lease_ms=None):
-    script = "flush set inet rabbitwall_console online_sources\n"
+    script = "flush set inet rabbitwall_console online_sources\n" + "".join(f"flush set inet rabbitwall_console {name}\n" for name in ("domain_sources","domain_resolver_sources","domain_targets"))
     if enabled:
         timeout = f"{LEASE}s" if lease_ms is None else f"{lease_ms}ms"
         script += f"add element inet rabbitwall_console online_sources {{ {AI_INTERFACE.network} timeout {timeout} }}\n"
@@ -168,12 +170,14 @@ class Controller:
         self.nodes = []
         self.config = SETTINGS
         self.node_revision = node_config.revision(self.config)
+        self.approvals = domain_approvals.Approvals(nft)
 
     def status(self):
         actual = read_gate()
         if actual["handle"] != self.handle:
             # nftables reload recreates an empty gate: never restore ON silently.
             self.desired = False
+            self.approvals.clear()
             self.handle = actual["handle"]
             apply_enabled(False)
             actual = read_gate()
@@ -185,7 +189,15 @@ class Controller:
             self.desired = False
             self.deadline = None
         remaining = max(0, self.deadline - time.monotonic()) if self.deadline is not None else None
-        return {"remaining_seconds": remaining, "enabled": actual["enabled"], "available": True, "checked_at": utc_now(),
+        approvals = self.approvals.snapshot()
+        if approvals and not actual.get('restricted',False):
+            # A lost kernel lease requires new human approval, just like full-open.
+            self.approvals.clear()
+            apply_enabled(False)
+            approvals = []
+        restricted = bool(approvals) and actual.get('restricted',False)
+        return {"domain_approvals":approvals, "mode":"full" if actual["enabled"] else "restricted" if restricted else "closed",
+                "remaining_seconds": remaining, "enabled": actual["enabled"] or restricted, "available": True, "checked_at": utc_now(),
                 "lease_seconds": LEASE, "nodes": self.nodes, "error": self.error}
 
     def node_settings(self):
@@ -202,6 +214,11 @@ class Controller:
             self.desired = False
             apply_enabled(False)
             raise
+        if self.approvals.grants:
+            self.desired = False
+            self.deadline = None
+            apply_enabled(False)
+            self.approvals.clear(sync=True)
         self.node_revision = node_config.revision(self.config)
         checked = utc_now()
         self.nodes = [{"id":"rabbitwall", "name":self.config['label'], "ip":f"{UPLINK_IP} / {AI_IP}",
@@ -214,6 +231,8 @@ class Controller:
     def set_enabled(self, enabled, duration_seconds=None):
         validate_duration(enabled, duration_seconds)
         self.status()
+        apply_enabled(False)
+        self.approvals.clear(sync=True)
         self.deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
         apply_enabled(enabled)
         self.desired = enabled
@@ -222,6 +241,34 @@ class Controller:
         if current["enabled"] != enabled:
             raise RuntimeError("kernel gate state did not match request")
         return current
+
+    def approve_domains(self, payload):
+        spec = domain_approvals.validate_request(self.config,payload)
+        self.desired = False
+        self.deadline = None
+        apply_enabled(False)
+        try:
+            self.approvals.approve(self.config,spec)
+        except Exception:
+            self.approvals.clear()
+            apply_enabled(False)
+            raise
+        self.error = None
+        print(json.dumps({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'domains':spec['domains'],
+                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']}),flush=True)
+        return self.status()
+
+    def revoke_domain(self, payload):
+        if not isinstance(payload,dict) or set(payload)!={'id'}: raise ValueError('id required')
+        if not any(g['id']==payload['id'] for g in self.approvals.grants.values()): raise ValueError('Approval no longer exists')
+        apply_enabled(False)
+        try: self.approvals.revoke(payload['id'])
+        except Exception:
+            self.approvals.clear()
+            apply_enabled(False)
+            raise
+        print(json.dumps({'event':'domain-revoke','at':utc_now(),'id':payload['id']}),flush=True)
+        return self.status()
 
     def tick(self):
         try:
@@ -241,10 +288,12 @@ class Controller:
                         apply_enabled(False)
                     else:
                         apply_enabled(True, lease_ms=min(LEASE * 1000, max(1, int(remaining * 1000))))
+            if self.approvals.grants or self.approvals.jobs: self.approvals.tick()
             self.error = None
         except (OSError, RuntimeError, ValueError, KeyError, StopIteration, subprocess.TimeoutExpired) as exc:
             self.desired = False
             self.error = str(exc)[:500]
+            self.approvals.clear()
             try:
                 apply_enabled(False)
             except Exception:
@@ -253,6 +302,7 @@ class Controller:
 
 def run_controller():
     controller = Controller()
+    controller.approvals.reset_runtime()
     print(json.dumps({"event": "controller-start", "enabled": False, "at": utc_now()}), flush=True)
     running = True
     def stop(*_):
@@ -269,13 +319,17 @@ def run_controller():
                 if len(raw) > 16384 or not raw.endswith(b"\n"):
                     raise ValueError("invalid control request")
                 data = json.loads(raw)
-                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") == "save_nodes" or (data.get("action") == "enable" and "payload" in data) else {"action"}):
+                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") in {"save_nodes","approve_domains","revoke_domain"} or (data.get("action") == "enable" and "payload" in data) else {"action"}):
                     raise ValueError("invalid control request")
                 action = data["action"]
                 if action == "status":
                     status = controller.status()
                 elif action == "nodes":
                     status = controller.node_settings()
+                elif action in {"approve_domains","revoke_domain"}:
+                    status = controller.approve_domains(data['payload']) if action == 'approve_domains' else controller.revoke_domain(data['payload'])
+                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                    print(json.dumps({'event':action,'at':utc_now(),'pid':pid,'uid':uid,'gid':gid}),flush=True)
                 elif action == "save_nodes":
                     status = controller.save_nodes(data["payload"])
                     pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
@@ -305,7 +359,7 @@ def run_controller():
         try:
             while running:
                 now = time.monotonic()
-                if now - last_tick >= 4:
+                if now - last_tick >= (.5 if controller.approvals.grants else 4):
                     controller.tick()
                     last_tick = now
                 if future and future.done():
@@ -322,6 +376,7 @@ def run_controller():
                 server.handle_request()
         finally:
             controller.desired = False
+            controller.approvals.close()
             apply_enabled(False)
             SOCKET.unlink(missing_ok=True)
 

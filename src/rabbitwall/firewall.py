@@ -92,13 +92,18 @@ def gate(config):
         flags interval,timeout
         timeout {LEASE}s
     }}
+    set domain_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
+    set domain_resolver_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
+    set domain_targets {{ type ipv4_addr . ipv4_addr; flags timeout; timeout {LEASE}s; }}
     chain ai_egress {{
         ct original ip saddr @online_sources counter return
+        meta l4proto tcp ct original proto-dst {{ 80, 443 }} ct original ip saddr . ct original ip daddr @domain_targets counter return
         limit rate 5/second burst 10 packets log prefix "rabbitwall-forward-drop gate "
         counter drop
     }}
     chain dns_request {{
         ip saddr @online_sources counter return
+        ip saddr @domain_sources counter return
         meta l4proto udp limit rate 5/second burst 10 packets log prefix "rabbitwall-dns-drop input" group 100 snaplen 4096 queue-threshold 1
         counter drop
     }}
@@ -106,17 +111,24 @@ def gate(config):
         meta l4proto udp limit rate 5/second burst 10 packets log prefix "rabbitwall-dns-drop forward" group 100 snaplen 4096 queue-threshold 1
         counter drop
     }}
+    chain dns_upstream {{
+        ip saddr @online_sources counter return
+        ip saddr @domain_resolver_sources counter return
+        counter drop
+    }}
     chain dns_reply {{
         ip daddr @online_sources counter return
+        ip daddr @domain_sources counter return
         counter drop
     }}
     chain input {{
         type filter hook input priority -10; policy accept;
+        iifname "{c['ai_if']}" ip saddr {ai.ip} counter drop
         iifname "{c['ai_if']}" ip daddr {ai.ip} meta l4proto {{ tcp, udp }} th dport 53 jump dns_request
     }}
     chain output {{
         type filter hook output priority -10; policy accept;
-        ip saddr {ai.ip} ip daddr {c['dns_upstream']} meta l4proto {{ tcp, udp }} th dport 53 jump dns_request
+        ip saddr {ai.ip} ip daddr {c['dns_upstream']} meta l4proto {{ tcp, udp }} th dport 53 jump dns_upstream
         oifname "{c['ai_if']}" ip saddr {ai.ip} meta l4proto {{ tcp, udp }} th sport 53 jump dns_reply
     }}
     chain forward {{
@@ -203,3 +215,29 @@ table ip rabbitwall_nat {{
 }}
 '''
     return result
+
+
+def domain_lease_rules(grants, now):
+    """Renew per-source DNS and public IPv4 destinations without changing full-open leases."""
+    lines = [f'flush set inet rabbitwall_console {name}' for name in ('domain_sources','domain_resolver_sources','domain_targets')]
+    resolver_life = 0
+    targets = {}
+    for grant in grants:
+        life = min(LEASE, grant['deadline']-now)
+        if life <= 0: continue
+        source = str(ipaddress.IPv4Address(grant['source']))
+        resolver_life = max(resolver_life,life)
+        lines.append(f'add element inet rabbitwall_console domain_sources {{ {source} timeout {max(1,int(life*1000))}ms }}')
+        for record in grant['records'].values():
+            valid = min(life,record.get('until',0)-now)
+            if valid <= 0: continue
+            for address in record.get('addresses',[]):
+                ip = ipaddress.IPv4Address(address)
+                if not ip.is_global: continue
+                targets[(source,str(ip))] = max(valid,targets.get((source,str(ip)),0))
+    if resolver_life:
+        from settings import AI_IP
+        lines.append(f'add element inet rabbitwall_console domain_resolver_sources {{ {AI_IP} timeout {max(1,int(resolver_life*1000))}ms }}')
+    for (source,address),life in sorted(targets.items()):
+        lines.append(f'add element inet rabbitwall_console domain_targets {{ {source} . {address} timeout {max(1,int(life*1000))}ms }}')
+    return '\n'.join(lines)+'\n'

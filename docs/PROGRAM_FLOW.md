@@ -4,7 +4,7 @@
 
 These diagrams group the main function calls and data paths by responsibility. Solid arrows indicate requests, calls or I/O; dotted arrows indicate file handoffs. Function names match the implementation. Main successful paths are simplified; helpers appear in the index below. Diagrams use GitHub-compatible Mermaid syntax.
 
-See the [OS command reference](OS_COMMANDS.md) for external commands, callers and the two Unix sockets.
+See the [OS command reference](OS_COMMANDS.md) for external commands, callers and the local Unix sockets.
 
 ## 1. Runtime overview
 
@@ -129,7 +129,7 @@ flowchart TB
 
 ## 5. Gate control and node health
 
-The web service sends fixed gate actions and validated node-only settings over a Unix socket. Node saves replace dedicated management-access and probe chains without touching the gate, NICs or DNS. Settings are backed up and atomically written per file to `/etc/rabbitwall-nodes/nodes.json` and the persistent firewall snippet; write failures attempt to restore files and live permissions. Monitoring and management SSH/HTTPS/Ping are independent. While open, a 20-second permission lease is renewed about every four seconds. Restart, table recreation or lease expiry does not automatically restore access. Health probes run about every ten seconds in a separate thread.
+The web service sends fixed gate actions and validated node-only settings over a Unix socket. Node saves replace dedicated management-access and probe chains without rebuilding NICs. Full-open state is preserved; active domain grants are discarded and their DNS policy cleared. Settings are backed up and atomically written per file to `/etc/rabbitwall-nodes/nodes.json` and the persistent firewall snippet; write failures attempt to restore files and live permissions. Monitoring and management SSH/HTTPS/Ping are independent. While open, a 20-second permission lease is renewed about every four seconds. Restart, table recreation or lease expiry does not automatically restore access. Health probes run about every ten seconds in a separate thread.
 
 ```mermaid
 flowchart TB
@@ -327,3 +327,25 @@ See the [installation guide](INSTALL.md) for deployment and the [operations guid
 ### [src/rabbitwall/dns_drops.py](../src/rabbitwall/dns_drops.py)
 
 `library()`, `decode_packet()`, `Observer.start()`, `Observer.close()`, `Observer.snapshot()`, `Observer.run()`, `Observer.receive()`
+
+
+## 8. Temporary domain approvals
+
+The management-only approval API never accepts arbitrary commands or resolver addresses. Resolution runs in a bounded worker, independently of DNS observation. nftables checks original connection source/destination and TCP port even for established flows; only unexpired approvals and DNS answers renew the short kernel lease. Expired or revoked grants cannot be restored by late worker results. See [temporary approvals](DOMAIN_APPROVALS.md) for the IP-sharing limitation.
+
+```mermaid
+flowchart TB
+    Human["Management PC: node / domains / purpose / duration"] --> API["POST /api/domain-approvals / mTLS + server key"]
+    API --> Controller["Controller.approve_domains() / close gate first"]
+    Controller --> Grant["Approvals.approve() / memory-only deadline"]
+    Grant --> RPZ["DNSGuard.apply() / per-client exact-QNAME RPZ"]
+    RPZ --> Check["unbound-checkconf / reload / list_auth_zones / flush_zone"]
+    Check --> DNS["Unbound / local Unix control socket"]
+    Grant --> Worker["resolve_domains() / dnspython A / configured upstream"]
+    Worker --> Answers["Public IPv4 / shortest answer TTL / max 8 per name"]
+    Answers --> Tick["Approvals.tick() / about 0.5 seconds"]
+    Tick --> Lease["domain_lease_rules() / nft -f -"]
+    Lease --> Kernel["DNS source sets + source.destination TCP 80/443 set"]
+    Grant --> End["Expiry / revoke / OFF / lost lease"]
+    End --> Close["Remove access / discard grants; no automatic resume"]
+```

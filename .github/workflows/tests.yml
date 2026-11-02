@@ -26,6 +26,7 @@ jobs:
       - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -e RABBITWALL_CONFIG=/workspace/examples/rabbitwall.example.json -v "$PWD:/workspace:ro" -w /workspace rabbitwall-gate-test /usr/bin/python3 -B tests/public_network_smoke.py
       - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -v "$PWD:/workspace:ro" -w /workspace rabbitwall-gate-test /usr/bin/python3 -B tests/deployment_smoke.py
       - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -v "$PWD:/workspace:ro" -w /workspace rabbitwall-gate-test /usr/bin/python3 -B tests/unbound_smoke.py
+      - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -v "$PWD:/workspace:ro" -w /workspace rabbitwall-gate-test /usr/bin/python3 -B tests/domain_approval_smoke.py
   unbound-ubuntu:
     runs-on: ubuntu-latest
     steps:
@@ -33,3 +34,4 @@ jobs:
       - run: docker build --build-arg TEST_BASE=ubuntu:24.04 -t rabbitwall-ubuntu-test -f tests/Dockerfile .
       - run: docker run --rm --network none -v "$PWD:/workspace:ro" -w /workspace rabbitwall-ubuntu-test /usr/bin/python3 -B -m unittest discover -s tests -p 'test_*.py'
       - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -v "$PWD:/workspace:ro" -w /workspace rabbitwall-ubuntu-test /usr/bin/python3 -B tests/unbound_smoke.py
+      - run: docker run --rm --privileged --network none -e RABBITWALL_DISPOSABLE_TEST=1 -v "$PWD:/workspace:ro" -w /workspace rabbitwall-ubuntu-test /usr/bin/python3 -B tests/domain_approval_smoke.py

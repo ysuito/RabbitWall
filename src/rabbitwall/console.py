@@ -23,6 +23,7 @@ from dns_observations import load_observations, domain_hints, record_answer_hist
 from traffic_analytics import collect_analytics
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, metadata, load
 import node_config
+import domain_approvals
 
 AI = AI_INTERFACE.network
 LAN = ipaddress.ip_network(SETTINGS["management_cidr"])
@@ -296,16 +297,26 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
 
     demo_deadline = None
+    demo_grants = {}
 
     def control_status(action="status", duration_seconds=None):
         nonlocal demo_deadline
         if demo:
             if action != "status":
                 demo_control["enabled"] = action == "enable"
+                demo_control["mode"] = "full" if action == "enable" else "closed"
+                demo_grants.clear()
                 demo_deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
             if demo_deadline is not None and time.monotonic() >= demo_deadline:
                 demo_control["enabled"] = False
+                demo_control["mode"] = "closed"
                 demo_deadline = None
+            for key,grant in list(demo_grants.items()):
+                if grant['_deadline'] <= time.monotonic(): del demo_grants[key]
+            if demo_control.get('mode') != 'full':
+                demo_control['mode'] = 'restricted' if demo_grants else 'closed'
+            demo_control['enabled'] = demo_control['mode'] != 'closed'
+            demo_control['domain_approvals'] = [dict({k:v for k,v in g.items() if k!='_deadline'},remaining_seconds=max(0,g['_deadline']-time.monotonic())) for g in demo_grants.values()]
             demo_control["remaining_seconds"] = max(0, demo_deadline-time.monotonic()) if demo_deadline is not None else None
             demo_control["checked_at"] = utc_now()
             for node in demo_control["nodes"]:
@@ -330,6 +341,24 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                         for node in demo_config['nodes']]]
                 return node_config.document(demo_config)
         return callback('nodes') if payload is None else callback('save_nodes', payload=payload)
+
+    def change_domains(action, request):
+        nonlocal demo_deadline
+        if not demo: return callback('approve_domains' if action=='approve' else 'revoke_domain',payload=request)
+        if action == 'approve':
+            spec = domain_approvals.validate_request(demo_config,request)
+            demo_deadline = None
+            demo_control['mode'] = 'restricted'
+            grant = dict(spec,id=secrets.token_hex(8),_deadline=time.monotonic()+spec['duration_seconds'],
+                         expires_at=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=spec['duration_seconds'])).isoformat(),
+                         records=[{'domain':name,'addresses':['1.1.1.1'],'error':None,'resolving':False} for name in spec['domains']])
+            demo_grants[spec['node_id']] = grant
+        else:
+            if not isinstance(request,dict) or set(request)!={'id'}: raise ValueError('id required')
+            key=next((key for key,g in demo_grants.items() if g['id']==request['id']),None)
+            if key is None: raise ValueError('Approval no longer exists')
+            del demo_grants[key]
+        return control_status()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "RabbitWall"
@@ -382,11 +411,11 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             if not self.valid_request(mutation=True):
                 return
             path = urlsplit(self.path).path
-            if path not in {"/api/internet", "/api/nodes"}:
+            if path not in {"/api/internet", "/api/nodes", "/api/domain-approvals"}:
                 self.send_error(404)
                 return
-            if path == "/api/nodes" and not self.access_status()["can_control"]:
-                self.send_payload(403, {"error":"ノードの保存には証明書付きHTTPSで接続してください。"})
+            if path in {"/api/nodes","/api/domain-approvals"} and not self.access_status()["can_control"]:
+                self.send_payload(403, {"error":"この操作には証明書付きHTTPSで接続してください。"})
                 return
             if not demo:
                 try:
@@ -400,17 +429,26 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                     return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= (12288 if path == "/api/nodes" else 128) or self.headers.get_content_type() != "application/json":
+                if not 0 < size <= (12288 if path in {"/api/nodes","/api/domain-approvals"} else 128) or self.headers.get_content_type() != "application/json":
                     raise ValueError("invalid body")
                 self.connection.settimeout(3)
                 data = json.loads(self.rfile.read(size))
-                if path == "/api/nodes":
+                if path == "/api/domain-approvals":
+                    if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke'):
+                        raise ValueError('action and request required')
+                elif path == "/api/nodes":
                     if not isinstance(data, dict) or set(data) != {"nodes", "revision"}: raise ValueError("nodes and revision required")
                 elif not isinstance(data, dict) or set(data) not in ({"enabled"}, {"enabled", "duration_seconds"}) or type(data["enabled"]) is not bool:
                     raise ValueError("enabled must be boolean")
                 if path == "/api/internet": validate_duration(data["enabled"], data.get("duration_seconds"))
             except (ValueError, OSError):
                 self.send_payload(400, {"error": "入力形式またはリクエストサイズが正しくありません。"})
+                return
+            if path == '/api/domain-approvals':
+                try:
+                    self.send_payload(200,{'control':change_domains(data['action'],data['request']),'demo':demo})
+                except ValueError as exc: self.send_payload(400,{'error':str(exc)})
+                except Exception as exc: self.send_payload(503,{'error':'限定許可の結果を確認できません。状態を再確認してください。','detail':str(exc)[:300]})
                 return
             if path == '/api/nodes':
                 try:
@@ -433,6 +471,12 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 return
             path = urlsplit(self.path).path
             status = 200
+            if path == '/api/domain-approvals':
+                try:
+                    self.send_payload(200,{'control':change_domains(data['action'],data['request']),'demo':demo})
+                except ValueError as exc: self.send_payload(400,{'error':str(exc)})
+                except Exception as exc: self.send_payload(503,{'error':'限定許可の結果を確認できません。状態を再確認してください。','detail':str(exc)[:300]})
+                return
             if path == '/api/nodes':
                 try:
                     self.send_payload(200, {'settings':nodes_status(), 'demo':demo, 'auth':self.access_status()})

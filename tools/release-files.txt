@@ -74,3 +74,12 @@ tools/update_geoip.py
 
 src/rabbitwall/dns_drops.py
 tests/test_dns_drops.py
+
+src/rabbitwall/domain_approvals.py
+src/rabbitwall/unbound_guard.py
+tests/domain_approval_smoke.py
+tests/test_domain_approvals.py
+docs/DOMAIN_APPROVALS.md
+docs/DOMAIN_APPROVALS.ja.md
+examples/AGENTS.network-approval.md
+examples/AGENTS.network-approval.ja.md
