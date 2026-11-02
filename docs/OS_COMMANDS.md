@@ -19,6 +19,8 @@ This reference lists external programs launched by RabbitWall's production sourc
 
 Sources: [console.py](../src/rabbitwall/console.py), [control.py](../src/rabbitwall/control.py), [node_config.py](../src/rabbitwall/node_config.py). Generated nftables statements are in [firewall.py](../src/rabbitwall/firewall.py). Collection intervals are configurable; probes take time and are not a strict real-time schedule.
 
+Dropped DNS is received through libnetfilter_log (OS shared library) and a local AF_NETLINK socket by the existing collector thread. No extra OS command or TCP/UDP listener is involved; no additional capabilities are granted.
+
 The web service does not execute these commands. It sends control requests over a Unix socket. The separate collector executes the read-only inspection commands.
 
 ## 2. Preflight and diagnostics [RabbitWall host]

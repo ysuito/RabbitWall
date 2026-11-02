@@ -99,6 +99,11 @@ def gate(config):
     }}
     chain dns_request {{
         ip saddr @online_sources counter return
+        meta l4proto udp limit rate 5/second burst 10 packets log prefix "rabbitwall-dns-drop input" group 100 snaplen 4096 queue-threshold 1
+        counter drop
+    }}
+    chain dns_direct {{
+        meta l4proto udp limit rate 5/second burst 10 packets log prefix "rabbitwall-dns-drop forward" group 100 snaplen 4096 queue-threshold 1
         counter drop
     }}
     chain dns_reply {{
@@ -116,7 +121,7 @@ def gate(config):
     }}
     chain forward {{
         type filter hook forward priority -10; policy accept;
-        iifname "{c['ai_if']}" meta l4proto {{ tcp, udp }} th dport 53 counter drop
+        iifname "{c['ai_if']}" meta l4proto {{ tcp, udp }} th dport 53 jump dns_direct
         iifname "{c['ai_if']}" oifname "{c['uplink_if']}" meta nfproto ipv6 counter drop
         iifname "{c['uplink_if']}" oifname "{c['ai_if']}" meta nfproto ipv6 counter drop
         iifname "{c['ai_if']}" oifname "{c['uplink_if']}" ip saddr {ai.network} ct direction original jump ai_egress

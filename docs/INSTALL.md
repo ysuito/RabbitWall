@@ -28,7 +28,7 @@ Obtain the public repository and work from its root directory. Run the following
 
 ```sh
 sudo apt update
-sudo apt install python3 python3-dnspython python3-protobuf unbound conntrack nftables iproute2 iputils-ping kmod
+sudo apt install python3 python3-dnspython python3-protobuf libnetfilter-log1 unbound conntrack nftables iproute2 iputils-ping kmod
 python3 -c "import dns, google.protobuf; print(dns.__version__, google.protobuf.__version__)"
 unbound -V
 sudo systemctl disable --now unbound
@@ -36,6 +36,8 @@ systemctl is-active NetworkManager
 ip -br -4 addr
 nmcli -f NAME,DEVICE connection show --active
 ```
+
+Dropped-DNS observation uses the OS `libnetfilter-log1` library and NFLOG group 100, reserved for RabbitWall. On existing installations, install this package before `sudo python3 setup.py update`. No extra service or listening TCP/UDP port is needed.
 
 If the machine does not use NetworkManager, configure it using the appropriate procedure for that OS, or install a supported OS. Do not automatically replace the current network manager over an existing SSH connection.
 

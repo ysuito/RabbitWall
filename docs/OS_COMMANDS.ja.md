@@ -131,3 +131,5 @@ Webサービスはこれらのコマンドを直接実行しません。制御�
 | `/run/rabbitwall-dns/dnstap.sock` | Unboundから観測プロセスへDNS応答のコピーを渡す。同じ `rabbitwall-dns` ユーザーを使い、ソケットは `0600`。観測停止・遅延がDNS転送の停止に直結しない構成 |
 
 どちらも同一マシン内の通信で、外部向けTCPポートを追加せず、ファイルの所有者・グループ・権限で接続を制限できます。制御ソケットでは接続元PID・UID・GIDも監査ログに記録します（開閉・保存操作）。Unixソケット自体がmTLSの代わりになるわけではなく、管理PCとの通信は別途CaddyのHTTPS／mTLSで保護します。
+
+DNS拒否の観測は、既存collector内のスレッドがOSの共有ライブラリ libnetfilter_log とローカルAF_NETLINKソケットで行います。追加のOSコマンド・TCP/UDP待受・権限追加はありません。

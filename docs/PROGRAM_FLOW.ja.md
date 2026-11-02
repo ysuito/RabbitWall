@@ -87,6 +87,9 @@ flowchart TB
     Hist --> State["atomic_json()"]
     Commit --> State
     Journal --> State
+    NFLOG["nftables DNS drop copies / group 100"] --> DropDNS["dns_drops.Observer / libnetfilter_log → decode_packet() / dnspython"]
+    DropDNS --> Ring["5 min / 200 parsed questions in memory"]
+    Ring --> State
     State -.-> JSON["state.json"]
 ```
 
@@ -316,3 +319,7 @@ flowchart TB
 `endpointNode()`, `routeColor()`, `groupFlows()`, `quadratic()`, `hash()`, `wrapLongitude()`, `projection()`, `unwrapRing()`, `pacificInset()`, `toggledSelection()`, `SessionAtlas.color()`, `SessionAtlas.setTheme()`, `SessionAtlas.resetPosition()`, `SessionAtlas.wheelZoom()`, `SessionAtlas.startPan()`, `SessionAtlas.movePan()`, `SessionAtlas.endPan()`, `SessionAtlas.setActive()`, `SessionAtlas.setPaused()`, `SessionAtlas.update()`, `SessionAtlas.paintSummary()`, `SessionAtlas.paintList()`, `SessionAtlas.select()`, `SessionAtlas.clearSelection()`, `SessionAtlas.paintDetail()`, `SessionAtlas.resize()`, `SessionAtlas.project()`, `SessionAtlas.layout()`, `SessionAtlas.paintBackground()`, `SessionAtlas.draw()`, `SessionAtlas.schedule()`, `SessionAtlas.pick()`
 
 実際の導入は[導入ガイド](INSTALL.ja.md)、保存期間や画面操作は[運用ガイド](OPERATIONS.ja.md)を参照してください。
+
+### [src/rabbitwall/dns_drops.py](../src/rabbitwall/dns_drops.py)
+
+`library()`, `decode_packet()`, `Observer.start()`, `Observer.close()`, `Observer.snapshot()`, `Observer.run()`, `Observer.receive()`

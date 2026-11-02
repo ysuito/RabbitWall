@@ -85,7 +85,25 @@ def main():
     script=baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"', gate(SETTINGS)+dns_rule(SETTINGS)+probe_rules(SETTINGS))
     control.nft(['-f','-'],script)
     controller = control.Controller()
+    from dns_drops import Observer
+    observer = Observer().start()
     try:
+        deadline=time.monotonic()+5
+        while observer.snapshot()[1] is not None and time.monotonic()<deadline: time.sleep(.05)
+        assert observer.snapshot()[1] is None,observer.snapshot()[1]
+        def query_dns(destination):
+            run(['ip','netns','exec','ai',sys.executable,'-c',
+                 "import socket,dns.message; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(dns.message.make_query('blocked.example','AAAA').to_wire(),('"+destination+"',53))"])
+            deadline=time.monotonic()+2
+            while time.monotonic()<deadline:
+                entries=observer.snapshot()[0]
+                if any(entry['dst']==destination and entry['dns_questions']==[{'name':'blocked.example.','type':'AAAA'}] for entry in entries): return
+                time.sleep(.02)
+            raise AssertionError(('DNS question not captured',entries,observer.snapshot()[1]))
+        query_dns('10.1.0.1')
+        client('ai','10.1.0.1',53,expected=False)
+        assert all(entry['proto']=='UDP' for entry in observer.snapshot()[0])
+        print('PASS: closed DNS stays blocked and NFLOG captures UDP questions only; TCP stays blocked',flush=True)
         for namespace, ports, udp in [("upstream", "443,53", "53"), ("ai", "22,443", "none"), (None, "22,53", "53")]:
             prefix = ["ip", "netns", "exec", namespace] if namespace else []
             child = subprocess.Popen(prefix + [sys.executable, "-u", "-c", SERVER, ports, udp, "10.0.0.254" if namespace == "upstream" else "10.1.0.1"], stdout=subprocess.PIPE, text=True)
@@ -134,6 +152,9 @@ for line in sys.stdin:
         print('PASS: opt-in TCP 443 works while closed, excludes other sources/SSH and revokes established access',flush=True)
 
         controller.set_enabled(True)
+        query_dns('8.8.8.8')
+        assert any(entry['dns_reason']=='direct-dns' for entry in observer.snapshot()[0])
+        observer.close()
         client("ai", "1.1.1.1", 443)
         client("ai", "10.0.0.254", 53, expected=False)
         client("ai", "10.0.0.254", 53, udp=True, expected=False)
@@ -318,6 +339,7 @@ except OSError: print("blocked",flush=True)
         assert not control.request_control('status')['enabled']
         print('PASS: actual controller socket saves/loads nodes, rejects stale writes, preserves ON on save and retains settings across restart',flush=True)
     finally:
+        observer.close()
         for child in children:
             child.terminate()
         for child in children:

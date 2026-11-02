@@ -38,9 +38,10 @@ def deploy(config):
     if os.geteuid() != 0:
         raise ValueError('Run setup.py install/update as root')
     sys.path.insert(0, str(ROOT/'src/rabbitwall'))
-    from dependencies import require_observer
+    from dependencies import require_observer, require_drop_dns
     from unbound_config import render, check_config, require_unbound, CONFIG_PATH
     require_observer()
+    require_drop_dns()
     require_unbound()
     unbound_text = render(config)
     check_config(unbound_text)

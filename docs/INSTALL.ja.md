@@ -28,7 +28,7 @@
 
 ```sh
 sudo apt update
-sudo apt install python3 python3-dnspython python3-protobuf unbound conntrack nftables iproute2 iputils-ping kmod
+sudo apt install python3 python3-dnspython python3-protobuf libnetfilter-log1 unbound conntrack nftables iproute2 iputils-ping kmod
 python3 -c "import dns, google.protobuf; print(dns.__version__, google.protobuf.__version__)"
 unbound -V
 sudo systemctl disable --now unbound
@@ -36,6 +36,8 @@ systemctl is-active NetworkManager
 ip -br -4 addr
 nmcli -f NAME,DEVICE connection show --active
 ```
+
+DNS拒否の観測にはOSの `libnetfilter-log1` とRabbitWall専用のNFLOGグループ100を使用します。既存環境では、このパッケージをインストールしてから `sudo python3 setup.py update` を実行してください。追加サービスやTCP/UDP待受ポートは不要です。
 
 NetworkManagerを使用していない機器では、OSに合った方法でNetworkManagerを設定するか、対応するOSをインストールする。既存SSH接続上でネットワーク管理方式を自動的に切り替えることはしない。
 

@@ -23,3 +23,11 @@ def require_observer():
         import dnstap_pb2
     except ImportError as error:
         raise ValueError('Install python3-protobuf for the dnstap observer') from error
+
+
+def require_drop_dns():
+    try:
+        from dns_drops import library
+        library()
+    except (OSError, AttributeError, ValueError) as error:
+        raise ValueError('Install libnetfilter-log1 for dropped DNS observation') from error

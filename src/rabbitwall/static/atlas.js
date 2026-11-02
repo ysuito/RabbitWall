@@ -181,6 +181,8 @@
         line.textContent = route.src.label + " → " + route.dst.label;
         sub.textContent = `${route.service} · ${route.count} セッション` + (this.kind === "history" ? " · " + byteLabel(route.totalBytes) : "");
         const names = [...new Set(route.flows.flatMap(f => (f.domain_hints || []).map(h => h.domain)))];
+        const queries = [...new Set(route.flows.flatMap(f => (f.dns_questions || []).map(q => q.name + " / " + q.type)))];
+        if (queries.length) sub.textContent += " · DNS問: " + queries.slice(0, 2).join(" / ");
         if (names.length) sub.textContent += " · 推定: " + names.slice(0, 2).join(" / ");
         if (route.flows.some(f => (f.domain_hints || []).some(h => h.is_new))) {
           const badge = document.createElement("span"); badge.className = "new-domain-badge";
@@ -207,6 +209,11 @@
         const line=document.createElement("code");
         line.textContent=`${flow.src}${flow.sport ? ":"+flow.sport : ""} → ${flow.dst}${flow.dport ? ":"+flow.dport : ""} · ${flow.state || flow.proto}`;
         this.detail.append(line);
+        if (flow.dns_questions) {
+          const query = document.createElement("small");
+          query.textContent = "DNS問い合わせ: " + (flow.dns_questions.map(q => q.name + " / " + q.type).join(" · ") || flow.dns_error || "内容不明");
+          this.detail.append(query);
+        }
         if (flow.domain_hints?.length) {
           const hint = document.createElement("small");
           hint.textContent = "推定ドメイン: " + flow.domain_hints.map(h => (h.is_new ? "【新】" : "") + h.domain).join(" / ");

@@ -181,7 +181,7 @@ def atomic_json(path, data):
             os.unlink(temporary)
 
 
-def collect_once(db, state_path, interval):
+def collect_once(db, state_path, interval, dns_drops=None):
     now, errors = utc_now(), []
     dns_records = load_observations()
     raw, error = command(["conntrack", "-L", "-f", "ipv4", "-o", "extended,id"])
@@ -199,10 +199,17 @@ def collect_once(db, state_path, interval):
                                      "--grep", "rabbitwall-(input|forward|output)-drop"], empty_ok=True)
     if journal_error:
         errors.append(journal_error)
+    dropped, drop_error = dns_drops.snapshot() if dns_drops is not None else ([], None)
+    for entry in dropped:
+        entry['scope'] = flow_scope(entry['src'], entry['dst'])
+        if entry['chain'] == 'input' and not entry.get('in'): entry['chain'] = 'output'
+    if drop_error: errors.append(drop_error)
+    drops = sorted(parse_journal(journal) + [entry for entry in dropped if entry['scope']],
+                   key=lambda entry:entry['time'], reverse=True)[:200]
     atomic_json(state_path, {"updated_at": now, "interval": interval, "demo": False,
                             "collector_ok": error is None, "errors": errors,
                             "flows": flows, "history": history, "analytics": analytics,
-                            "drops": parse_journal(journal)[:200]})
+                            "drops": drops})
 
 
 def demo_state():
@@ -231,7 +238,11 @@ def demo_state():
             "errors": [], "flows": flows, "history": [dict(f, ended_at=None) for f in flows],
             "drops": [{"time": now, "scope": "AI", "chain": "forward", "src": next((n['ip'] for n in SETTINGS['nodes'] if n['interface']==SETTINGS['ai_if']), AI_IP),
                        "dst": SETTINGS['admin_ip'], "proto": "TCP", "sport": "50123", "dport": "22",
-                       "in": SETTINGS["ai_if"], "out": SETTINGS["uplink_if"]}]}
+                       "in": SETTINGS["ai_if"], "out": SETTINGS["uplink_if"]},
+                      {"time":now, "scope":"AI", "chain":"input", "src":host,
+                       "dst":str(AI_IP), "proto":"UDP", "sport":"50321", "dport":"53",
+                       "in":SETTINGS['ai_if'], "out":"", "dns_reason":"closed",
+                       "dns_questions":[{"name":"example.com.", "type":"AAAA"}], "dns_error":None}]}
 
 
 class ConsoleServer(ThreadingHTTPServer):
@@ -468,6 +479,8 @@ def main():
         args.state_dir.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(str(args.state_dir / "history.sqlite3"))
         os.chmod(args.state_dir / "history.sqlite3", 0o600)
+        from dns_drops import Observer
+        dns_drops = Observer().start()
         running = True
         def stop(*_):
             nonlocal running
@@ -476,12 +489,13 @@ def main():
         signal.signal(signal.SIGINT, stop)
         try:
             while running:
-                collect_once(db, state_path, args.interval)
+                collect_once(db, state_path, args.interval, dns_drops)
                 for _ in range(args.interval * 10):
                     if not running:
                         break
                     time.sleep(0.1)
         finally:
+            dns_drops.close()
             db.close()
     else:
         server = ConsoleServer(("127.0.0.1", args.port), make_handler(state_path, args.port, args.mode == "demo", geoip_path=args.geoip_db))

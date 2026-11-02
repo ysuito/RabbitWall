@@ -71,3 +71,6 @@ tools/mtls.py
 tools/release-files.txt
 tools/release.py
 tools/update_geoip.py
+
+src/rabbitwall/dns_drops.py
+tests/test_dns_drops.py

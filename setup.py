@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'src/rabbitwall'))
 from settings import validate, load, NODES_CONFIG, require_config
 
-DEPENDENCIES = ['python3', 'python3-dnspython', 'python3-protobuf', 'unbound', 'conntrack', 'nftables', 'iproute2', 'iputils-ping', 'kmod']
+DEPENDENCIES = ['python3', 'python3-dnspython', 'python3-protobuf', 'libnetfilter-log1', 'unbound', 'conntrack', 'nftables', 'iproute2', 'iputils-ping', 'kmod']
 
 
 def run(*args, **kwargs):
@@ -127,10 +127,11 @@ def check(config, require_addresses=False, inspect_ports=True):
             if service != 'NetworkManager' and active: errors.append(f'Conflicting service: {service}; use a dedicated gateway.')
     for device in (config['uplink_if'],config['ai_if']):
         if sys.platform == 'linux' and not (Path('/sys/class/net')/device).exists(): errors.append(f'NIC not found: {device}')
-    from dependencies import require_observer
+    from dependencies import require_observer, require_drop_dns
     from unbound_config import require_unbound
     try:
         require_observer()
+        require_drop_dns()
         require_unbound()
     except ValueError as error: errors.append(str(error))
     if inspect_ports and shutil.which('ss'):

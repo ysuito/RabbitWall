@@ -172,7 +172,7 @@ function render() {
   renderAnalytics();
   const search = $("search").value.toLowerCase(), scope = $("scope").value, proto = $("proto").value;
   const matches = f => (scope === "all" || (scope === "related" ? ["AI", "MANAGEMENT"].includes(f.scope) : f.scope === scope)) && (proto === "all" || f.proto === proto) &&
-    [...(f.domain_hints || []).map(h => h.domain), f.src, f.dst, f.sport, f.dport, f.proto, f.service, f.state, f.chain, direction(f), countryText(f.src_country), countryText(f.dst_country)].join(" ").toLowerCase().includes(search);
+    [...(f.domain_hints || []).map(h => h.domain), ...(f.dns_questions || []).flatMap(q=>[q.name,q.type]), f.dns_error, f.src, f.dst, f.sport, f.dport, f.proto, f.service, f.state, f.chain, direction(f), countryText(f.src_country), countryText(f.dst_country)].join(" ").toLowerCase().includes(search);
   const rows = snapshot[tab].filter(matches);
   $("row-count").textContent = rows.length + " 件";
   atlas.update(rows, {kind:tab, stale:snapshot.stale || !snapshot.collector_ok, network:snapshot.network});
@@ -185,6 +185,12 @@ function render() {
     const srcCell = cell(row, endpoint(f.src, f.sport), "mono"), srcCountry = document.createElement("small");
     srcCountry.className = "endpoint-country"; srcCountry.textContent = countryText(f.src_country); srcCell.append(srcCountry);
     const dstCell = cell(row, endpoint(f.dst, f.dport), "mono");
+    if (tab === "drops" && f.dns_questions) {
+      const query=document.createElement("small");query.className="endpoint-country";
+      query.textContent="DNS: " + (f.dns_questions.map(q=>q.name+" / "+q.type).join(" · ") || f.dns_error || "内容不明");
+      query.title=f.dns_reason === "direct-dns" ? "RabbitWallを経由しないDNSの直接通信を遮断" : "対外接続が閉じているためDNSを遮断";
+      dstCell.append(query);
+    }
     if (f.domain_hints?.length) {
       const hints = document.createElement("small"); hints.className = "endpoint-country";
       hints.textContent = "推定ドメイン: " + f.domain_hints.map(h => h.domain).join(" / ");
@@ -202,7 +208,7 @@ function render() {
   }
   if (!rows.length) { const tr = document.createElement("tr"), td = cell(tr, "該当する通信はありません", "empty"); td.colSpan = 8; $("rows").append(tr); }
   $("table-note").textContent = tab === "drops"
-    ? "直近5分・最大200件。既存FWのログに記録された拒否のみ表示します。レート制限やログのないルールによる拒否は含みません。"
+    ? "直近5分・最大200件。FWの拒否ログとUDP DNS拒否の観測を表示します。DNSは問い合わせ名・種類を取得します。TCP DNSの内容は観測せず、遮断は維持します。レート制限やログのないルールによる拒否は含みません。"
     : tab === "history"
     ? "約5秒ごとの観測履歴から直近500件を表示。終了済みの保存は24時間・全体目安2万件。短い通信は見逃す場合があります。観測終了はTCP切断時刻ではありません。"
     : "RabbitWallを通る通信を両方向の開始元で表示。LAN → AIの管理SSHも含みます。送受信量は開始元を基準にした累計、国はIPからの概算です。";

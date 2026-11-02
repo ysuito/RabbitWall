@@ -65,7 +65,9 @@ When there is one candidate domain, multiple IPs for that name are grouped toget
 
 Session history, known domains and traffic data are stored in `/var/lib/rabbitwall/history.sqlite3`. Ended sessions are retained for 24 hours, with an approximate overall target of 20,000 entries. Traffic aggregates cover up to 30 days; older minute data is compacted into hourly totals. The known-domain catalog is not subject to session-history expiry. The database is updated with each collection transaction; monitor free space and write volume in your environment.
 
-Rejection logs show up to 200 kernel journal entries from the last five minutes. Firewall log rate limits and rules that reject without logging mean that this is not a count of all rejected packets.
+The rejection view combines kernel journal logs and dropped-DNS observations, showing up to 200 entries from the last five minutes. Firewall log rate limits and rules that reject without logging mean that this is not a count of all rejected packets.
+
+UDP DNS entries show actual query names and record types, rather than inferred domains. Both closed-gate UDP DNS and direct external UDP port-53 DNS are observed; search accepts query names and types. The existing collector receives packet copies via the OS libnetfilter_log library and NFLOG group 100. Observation failure cannot change or delay packet verdicts. Each DNS rule logs at most 5 packets/second with a burst of 10 and copies at most 4096 bytes. Up to 200 parsed observations are held in memory for five minutes and included in state JSON; raw packets and a separate DNS-rejection database are not written. Collector restart clears these observations. TCP DNS remains blocked according to the firewall policy, but its content is not observed: new connections are dropped at SYN before a DNS query is sent. Fragmented IP packets, malformed/truncated messages and encrypted DNS cannot reliably be decoded.
 
 ## IP-country database
 
