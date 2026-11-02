@@ -63,7 +63,7 @@ Webサービスはこれらのコマンドを直接実行しません。制御�
 | `systemctl is-active --quiet rabbitwall-caddy`、`systemctl is-enabled --quiet rabbitwall-caddy` | 更新前にCaddyを復帰させる必要があるか確認 |
 | `systemctl restart rabbitwall-caddy`、`systemctl is-active --quiet rabbitwall-caddy` | 導入済みで稼働中または有効化済みだったCaddyを、Web起動後に復帰・確認 |
 
-再適用時にmTLSが導入済みなら、次節のサーバー証明書の検証と `caddy validate` も実行します。通常の `update` はNIC・基本FW・sysctlを再適用しません。ノード設定の保存は `update` とは別で、成功時の開閉状態を維持します。
+再適用時にmTLSが導入済みなら、次節のサーバー証明書の検証と `caddy validate` も実行します。通常の `update` はNIC・基本FW・sysctlを再適用しません。ノード設定の保存は `update` とは別で、通常の開状態は維持します。ドメイン限定許可は保存時に破棄します。
 
 発行箇所：[setup.py](../setup.py)、[deploy.py](../tools/deploy.py)、[control.py](../src/rabbitwall/control.py)。
 
@@ -130,6 +130,21 @@ Webサービスはこれらのコマンドを直接実行しません。制御�
 | `/run/rabbitwall/control.sock` | Webから権限を持つcontrolサービスへ状態取得・開閉・検証済みノード設定を渡す。`root:rabbitwall-control`、ソケットは `0660`、親ディレクトリは `0750`。Webをrootにせず、操作権限を制御サービスに集約する |
 | `/run/rabbitwall-dns/dnstap.sock` | Unboundから観測プロセスへDNS応答のコピーを渡す。同じ `rabbitwall-dns` ユーザーを使い、ソケットは `0600`。観測停止・遅延がDNS転送の停止に直結しない構成 |
 
-どちらも同一マシン内の通信で、外部向けTCPポートを追加せず、ファイルの所有者・グループ・権限で接続を制限できます。制御ソケットでは接続元PID・UID・GIDも監査ログに記録します（開閉・保存操作）。Unixソケット自体がmTLSの代わりになるわけではなく、管理PCとの通信は別途CaddyのHTTPS／mTLSで保護します。
+いずれも同一マシン内の通信で、外部向けTCPポートを追加せず、ファイルの所有者・グループ・権限で接続を制限できます。制御ソケットでは接続元PID・UID・GIDも監査ログに記録します（開閉・保存操作）。Unixソケット自体がmTLSの代わりになるわけではなく、管理PCとの通信は別途CaddyのHTTPS／mTLSで保護します。
 
 DNS拒否の観測は、既存collector内のスレッドがOSの共有ライブラリ libnetfilter_log とローカルAF_NETLINKソケットで行います。追加のOSコマンド・TCP/UDP待受・権限追加はありません。
+
+
+## 8. ドメイン一時許可【RabbitWall導入先PC】
+
+root制御プロセスが `unbound_guard.py` から以下の固定コマンドを追加で発行します。
+
+| コマンド | 用途 |
+| --- | --- |
+| `unbound-checkconf /etc/rabbitwall-unbound.conf` | 生成した端末別RPZを含む設定全体を適用前に検証 |
+| `unbound-control -c /etc/rabbitwall-unbound.conf reload` | 承認した完全一致の名前を反映、または全体開通前に制限を解除 |
+| `unbound-control -c /etc/rabbitwall-unbound.conf list_auth_zones` | 非同期RPZ読み込みの完了を確認 |
+| `unbound-control -c /etc/rabbitwall-unbound.conf flush_zone .` | ポリシー変更後にキャッシュを消去 |
+| `nft -f -` | 限定許可中は約0.5秒ごとにDNS許可元と送信元IP・宛先IPのTCP 80/443許可期限を更新 |
+
+Unbound制御は `/run/rabbitwall-dns/control.sock`（DNSグループのUnixソケット）を使い、TCP制御ポートは開きません。制御プロセスは `rabbitwall-dns` グループに参加します。承認名の解決はdnspythonから直接行い、`dig` は起動しません。ノード保存時は限定許可を破棄してDNSポリシーを解除します。[一時許可の手順](DOMAIN_APPROVALS.ja.md)も参照してください。

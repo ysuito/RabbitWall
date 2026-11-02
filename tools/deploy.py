@@ -39,7 +39,7 @@ def deploy(config):
         raise ValueError('Run setup.py install/update as root')
     sys.path.insert(0, str(ROOT/'src/rabbitwall'))
     from dependencies import require_observer, require_drop_dns
-    from unbound_config import render, check_config, require_unbound, CONFIG_PATH
+    from unbound_config import render, check_config, require_unbound, CONFIG_PATH, POLICY_FILE
     require_observer()
     require_drop_dns()
     require_unbound()
@@ -96,6 +96,12 @@ def deploy(config):
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
         shutil.copyfile(source, target)
         target.chmod(0o644)
+    POLICY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chown(POLICY_FILE.parent,0,grp.getgrnam('rabbitwall-dns').gr_gid)
+    POLICY_FILE.parent.chmod(0o2750)
+    POLICY_FILE.write_text('')
+    os.chown(POLICY_FILE,0,grp.getgrnam('rabbitwall-dns').gr_gid)
+    POLICY_FILE.chmod(0o640)
     CONFIG_PATH.write_text(unbound_text)
     CONFIG_PATH.chmod(0o644)
     run('/usr/bin/python3', '-B', '/opt/rabbitwall/control.py', 'install')

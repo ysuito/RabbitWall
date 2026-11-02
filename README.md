@@ -10,6 +10,7 @@ RabbitWall is a web console for a Linux gateway that lets you observe traffic fr
 - Monitor node availability and display inferred domains, estimated countries, and newly observed domains
 - Rank traffic volume over the last hour or 24 hours
 - Close Internet access, including established connections and DNS
+- Temporarily approve exact domains per AI node for 1, 5 or 30 minutes
 - Restrict management access to one PC using source-IP filtering and Caddy client-certificate authentication (mTLS)
 - Choose a color scheme, drag the map, and check clearly labeled status indicators
 
@@ -89,3 +90,5 @@ NAT is the default, so Internet access does not require an additional static rou
 RabbitWall is released under the [MIT License](LICENSE). See [THIRD_PARTY.md](src/rabbitwall/static/THIRD_PARTY.md) for map data and other third-party assets. Country-IP data is an optional download.
 
 Repository layout: application in `src/rabbitwall/`, setup and maintenance helpers in `tools/`, service definitions in `systemd/`, and tests in `tests/`.
+
+[Temporary domain approvals and agent request workflow](docs/DOMAIN_APPROVALS.md).

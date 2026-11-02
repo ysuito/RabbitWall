@@ -129,7 +129,7 @@ flowchart TB
 
 ## 5. 開閉制御と死活監視
 
-WebはUnixソケットで固定の開閉操作と検証済みのノード設定を渡します。ノード保存は専用の管理アクセス・監視用チェーンだけを更新し、開閉ゲート・NIC・DNSを変更しません。設定のバックアップ後、`/etc/rabbitwall-nodes/nodes.json` と永続FW断片をファイル単位で原子的に保存し、書込失敗時は元のファイルと稼働ルールへの復元を試みます。監視と管理SSH・HTTPS・Pingの許可は独立しています。開状態は約4秒ごとに更新する20秒の許可期限で管理し、再起動・テーブル再作成・期限切れ後は自動で開き直しません。死活監視は約10秒ごとに別スレッドで実行します。
+WebはUnixソケットで固定の開閉操作と検証済みのノード設定を渡します。ノード保存は専用の管理アクセス・監視用チェーンを更新し、NICは再設定しません。通常の開状態は維持しますが、ドメイン限定許可中は許可を破棄し、DNSポリシーを解除します。設定のバックアップ後、`/etc/rabbitwall-nodes/nodes.json` と永続FW断片をファイル単位で原子的に保存し、書込失敗時は元のファイルと稼働ルールへの復元を試みます。監視と管理SSH・HTTPS・Pingの許可は独立しています。開状態は約4秒ごとに更新する20秒の許可期限で管理し、再起動・テーブル再作成・期限切れ後は自動で開き直しません。死活監視は約10秒ごとに別スレッドで実行します。
 
 ```mermaid
 flowchart TB
@@ -327,3 +327,25 @@ flowchart TB
 ### [src/rabbitwall/dns_drops.py](../src/rabbitwall/dns_drops.py)
 
 `library()`, `decode_packet()`, `Observer.start()`, `Observer.close()`, `Observer.snapshot()`, `Observer.run()`, `Observer.receive()`
+
+
+## 8. ドメインの期限付き許可
+
+管理用APIでは任意コマンドや解決先DNSを受け付けません。DNS観測とは独立したワーカーが承認された名前を解決します。確立済み通信も接続元・接続先・TCPポートを検査し、承認期限とDNS TTLの両方が有効な間だけカーネルの短い許可期限を更新します。遅れて完了した解決結果から失効した許可は復元しません。共有IPに関する制限は[一時許可の手順](DOMAIN_APPROVALS.ja.md)を参照してください。
+
+```mermaid
+flowchart TB
+    Human["管理PC: ノード / ドメイン / 目的 / 期限"] --> API["POST /api/domain-approvals / mTLS + 内部キー"]
+    API --> Controller["Controller.approve_domains() / 最初に遮断"]
+    Controller --> Grant["Approvals.approve() / メモリ上の承認期限"]
+    Grant --> RPZ["DNSGuard.apply() / 端末別・完全一致QNAME RPZ"]
+    RPZ --> Check["unbound-checkconf / reload / list_auth_zones / flush_zone"]
+    Check --> DNS["Unbound / ローカルUnix制御ソケット"]
+    Grant --> Worker["resolve_domains() / dnspython A / 設定された上流DNS"]
+    Worker --> Answers["公開IPv4 / 最短TTL / 名前ごとに最大8 IP"]
+    Answers --> Tick["Approvals.tick() / 約0.5秒ごと"]
+    Tick --> Lease["domain_lease_rules() / nft -f -"]
+    Lease --> Kernel["DNS許可元 + 送信元.宛先 TCP 80/443セット"]
+    Grant --> End["期限切れ / 取消 / 閉 / リース消失"]
+    End --> Close["遮断・許可破棄 / 自動復帰なし"]
+```

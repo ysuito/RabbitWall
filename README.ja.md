@@ -10,6 +10,7 @@ AI用ネットワークの通信を可視化し、インターネットへの接
 - ノードの死活監視、推定ドメイン・国・初見ドメインの表示
 - 直近1時間／24時間の通信量ランキング
 - インターネットの開閉。閉じると既存接続とDNSも遮断
+- AI端末ごとにドメインを承認し、1分・5分・30分だけ限定開通
 - 管理PCのIP制限＋Caddyのクライアント証明書認証（mTLS）
 - 配色変更、地図のドラッグ、読みやすい状態表示
 
@@ -89,3 +90,5 @@ sudo python3 setup.py install --apply-network
 本体はMITライセンス。地図データ等の第三者資材については [THIRD_PARTY.md](src/rabbitwall/static/THIRD_PARTY.md) を参照してください。国別IPデータは任意の追加導入です。
 
 フォルダー構成：アプリ本体は `src/rabbitwall/`、導入・保守処理は `tools/`、サービス定義は `systemd/`、テストは `tests/` です。
+
+[ドメイン限定の一時許可とエージェント向け申請手順](docs/DOMAIN_APPROVALS.ja.md)。

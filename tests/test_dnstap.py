@@ -125,7 +125,7 @@ class Dnstap(unittest.TestCase):
         text=render(SETTINGS)
         for fragment in ('interface: 10.1.0.1','outgoing-interface: 10.1.0.1',
                          'forward-addr: 10.0.0.254','forward-first: no',
-                         'dnstap-log-client-response-messages: yes','module-config: "iterator"'):
+                         'dnstap-log-client-response-messages: yes','module-config: "respip iterator"'):
             self.assertIn(fragment,text)
         root=Path(__file__).resolve().parents[1]
         unit=(root/'systemd/rabbitwall-dns.service').read_text()

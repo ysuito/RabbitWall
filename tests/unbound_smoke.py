@@ -163,6 +163,9 @@ def main():
             shutil.chown(runtime,user='unbound',group='unbound');runtime.chmod(0o750)
             up=start(['ip','netns','exec','upstream',sys.executable,'-B',__file__,'--upstream',directory],stdout=subprocess.PIPE,text=True)
             assert up.stdout.readline().strip()=='ready'
+            from unbound_config import POLICY_FILE
+            POLICY_FILE.parent.mkdir(parents=True,exist_ok=True);POLICY_FILE.parent.chmod(0o755)
+            POLICY_FILE.write_text('');POLICY_FILE.chmod(0o644)
             config=directory/'unbound.conf';config.write_text(render(SETTINGS));config.chmod(0o644);check_config(config.read_text())
             with (directory/'unbound.log').open('w') as log:
                 # Reproduce the reported failure when NETLINK_ROUTE is denied.

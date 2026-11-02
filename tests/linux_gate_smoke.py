@@ -109,6 +109,7 @@ def main():
             child = subprocess.Popen(prefix + [sys.executable, "-u", "-c", SERVER, ports, udp, "10.0.0.254" if namespace == "upstream" else "10.1.0.1"], stdout=subprocess.PIPE, text=True)
             children.append(child)
             assert child.stdout.readline().strip() == "ready"
+        local_echo = child
         assert not controller.status()["enabled"]
         client("ai", "1.1.1.1", 443, expected=False)
         client("ai", "10.0.0.254", 53, expected=False, udp=True)
@@ -312,6 +313,21 @@ except OSError: print("blocked",flush=True)
                 assert time.monotonic()<deadline
                 time.sleep(.02)
             return process
+        # The controller clears any RPZ left in a surviving Unbound before
+        # opening. Replace the earlier echo fixture with the real DNS service
+        # for this end-to-end socket test, just as an installed host provides.
+        local_echo.terminate();local_echo.wait(timeout=3)
+        from unbound_config import POLICY_FILE, CONFIG_PATH, render
+        POLICY_FILE.parent.mkdir(parents=True,exist_ok=True);POLICY_FILE.write_text('')
+        Path('/run/rabbitwall-dns').mkdir(exist_ok=True)
+        CONFIG_PATH.write_text(render(SETTINGS))
+        dns_process=subprocess.Popen(['unbound','-d','-c',str(CONFIG_PATH)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
+        children.append(dns_process)
+        deadline=time.monotonic()+5
+        while not Path('/run/rabbitwall-dns/control.sock').exists():
+            assert dns_process.poll() is None,dns_process.stderr.read()
+            assert time.monotonic()<deadline,'Unbound control socket did not start'
+            time.sleep(.02)
         process=start_controller()
         doc=control.request_control('nodes')
         timed = control.request_control('enable', payload=60)
