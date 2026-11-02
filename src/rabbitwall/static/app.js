@@ -98,7 +98,7 @@ function renderControl() {
   const state = known ? control.mode === "restricted" ? "restricted" : control.enabled ? "online" : "offline" : "unknown";
   $("gate-panel").dataset.state=state;
   $("gate-panel").setAttribute("aria-busy",String(controlBusy));
-  $("gate-state").textContent = known ? control.mode === "restricted" ? "限" : control.enabled ? "開" : "閉" : "不明";
+  $("gate-state").textContent = known ? control.mode === "restricted" ? "限定開放" : control.enabled ? "開放" : "閉塞" : "不明";
   $("gate-state").className = "gate-state " + state;
   $("internet-toggle").disabled=controlBusy || !controlAuthorized;
   $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && control.enabled)));
@@ -421,7 +421,9 @@ async function loadApprovalNodes() {
   } catch(error){$("approval-message").textContent=error.message;}
 }
 function renderApprovals(){
-  $("approval-mode").textContent=control?.mode === "restricted" ? "限 / 限定許可" : control?.enabled ? "開 / 全体開通" : "閉";
+  const known=control?.available && !control.error;
+  document.querySelector('[data-page="approvals"]').dataset.state=known ? control.enabled ? "active" : "closed" : "unknown";
+  $("approval-mode").textContent=!known ? "状態不明" : control.mode === "restricted" ? "限定開放" : control.enabled ? "開放" : "閉塞";
   $("approval-submit").disabled=controlBusy || !controlAuthorized || !$("approval-node").options.length;
   const list=$("approval-list");list.replaceChildren();
   for(const grant of control?.domain_approvals || []){

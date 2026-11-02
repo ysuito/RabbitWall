@@ -159,3 +159,40 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 #control-message:empty{display:none}
 
 .domain-link{font-size:13px;padding:8px 12px;display:block}.approval-page{margin-bottom:16px}.approval-fields{display:grid;grid-template-columns:1fr 150px 2fr;gap:16px;margin:20px 0}.approval-fields label,.approval-domain-label{display:grid;gap:8px;font-size:14px}.approval-fields input,.approval-fields select,.approval-domain-label textarea{background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:10px;font:14px ui-monospace,monospace;min-width:0}.approval-domain-label textarea{resize:vertical;width:100%}#approval-submit{margin-top:12px}.approval-entry{border-top:1px solid var(--line);padding:16px 0}.approval-entry h3{font-size:17px;margin:0 0 8px}.approval-entry p,.approval-entry li{font-size:14px;line-height:1.8}.approval-entry ul{padding-left:20px}.approval-entry button{margin-top:10px}.gate-panel[data-state="restricted"]{border-color:var(--accent)}.gate-state.restricted{color:var(--accent)}.gate-panel[data-state="restricted"] .gate-indicator{background:var(--surface);border-color:var(--accent)}.gate-panel[data-state="restricted"] .gate-indicator::after{left:30px;background:var(--accent)}@media(max-width:800px){.approval-fields{grid-template-columns:1fr 1fr}.approval-purpose{grid-column:1/-1}}
+
+/* Egress is quiet while closed; any permitted external access is a warning. */
+#gate-panel{--gate-color:var(--muted);--gate-border:var(--line);--gate-fill:var(--bg);--gate-surface:var(--surface);--accent:var(--gate-color);color:var(--gate-color);border-color:var(--gate-border);background:var(--gate-surface)}
+#gate-panel[data-state="online"],#gate-panel[data-state="restricted"]{--gate-color:#ffb454;--gate-border:#c78b38;--gate-fill:color-mix(in srgb,var(--bg) 85%,#ffb454);--gate-surface:color-mix(in srgb,var(--surface) 92%,#ffb454)}
+#gate-panel[data-state="unknown"]{--gate-color:#fa846c;--gate-border:#b36b5b;--gate-fill:color-mix(in srgb,var(--bg) 85%,#fa846c)}
+:root[data-theme="white"] #gate-panel[data-state="online"],:root[data-theme="white"] #gate-panel[data-state="restricted"]{--gate-color:#915000;--gate-border:#a76716}
+:root[data-theme="white"] #gate-panel[data-state="unknown"]{--gate-color:#ad3027;--gate-border:#ad3027}
+#gate-panel .section-title h2,#gate-panel .section-title small,#gate-panel .gate-state,#gate-panel .hint,#gate-panel a,#gate-panel #gate-timer{color:var(--gate-color)}
+#gate-panel .section-title i{color:var(--gate-color);background:var(--gate-fill);border:1px solid var(--gate-border)}
+#gate-panel[data-state="online"] .section-title i,#gate-panel[data-state="restricted"] .section-title i{color:var(--bg);background:var(--gate-color)}
+#gate-panel .gate-state{border-color:var(--gate-border);background:transparent}
+#gate-panel .gate-indicator,#gate-panel .gate-timers button{color:var(--gate-color);border-color:var(--gate-border);background:var(--gate-fill)}
+#gate-panel .gate-indicator::after{background:var(--gate-color)}
+#gate-panel .gate-timers button:hover:enabled{background:var(--gate-color);color:var(--bg)}
+
+/* Approval actions and active grants use the same warning meaning as egress. */
+[data-page="approvals"]{--approval-warning:#ffb454;--approval-warning-line:#c78b38;--approval-color:var(--muted);--approval-line:var(--line)}
+:root[data-theme="white"] [data-page="approvals"]{--approval-warning:#915000;--approval-warning-line:#a76716}
+[data-page="approvals"][data-state="active"]{--approval-color:var(--approval-warning);--approval-line:var(--approval-warning-line)}
+[data-page="approvals"][data-state="unknown"]{--approval-color:var(--red);--approval-line:var(--red)}
+[data-page="approvals"] .approval-page{border-color:var(--approval-line);color:var(--approval-color)}
+[data-page="approvals"] .approval-page::before{background:var(--approval-line)}
+[data-page="approvals"] .section-title h2,[data-page="approvals"] .hint,[data-page="approvals"] #approval-mode{color:var(--approval-color)}
+[data-page="approvals"] #approval-mode{border-color:var(--approval-line);background:transparent}
+[data-page="approvals"] .section-title i{color:var(--bg);background:var(--approval-color)}
+[data-page="approvals"][data-state="active"] .approval-page{background:color-mix(in srgb,var(--surface) 92%,#ffb454)}
+[data-page="approvals"][data-state="active"] input,[data-page="approvals"][data-state="active"] select,[data-page="approvals"][data-state="active"] textarea{color:var(--approval-color);border-color:var(--approval-line)}
+[data-page="approvals"] .approval-entry{border-color:var(--approval-line)}
+[data-page="approvals"] .approval-entry h3{color:var(--approval-color)}
+[data-page="approvals"] #approval-submit{color:var(--bg);background:var(--approval-warning);border-color:var(--approval-warning-line)}
+[data-page="approvals"] #approval-submit:hover:enabled{background:color-mix(in srgb,var(--approval-warning) 85%,var(--ink))}
+[data-page="approvals"] .approval-entry button{color:var(--approval-color);background:var(--bg);border-color:var(--approval-line)}
+[data-page="approvals"] .approval-entry button:hover:enabled{color:var(--bg);background:var(--approval-color)}
+[data-page="approvals"] .approval-page>p{color:var(--approval-color)}
+
+#gate-panel .gate-current>div{min-width:0}
+#gate-panel .gate-state{display:block;width:auto;height:auto;white-space:nowrap;font-size:clamp(25px,2.7vw,36px);line-height:1.25;letter-spacing:.04em}
