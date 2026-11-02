@@ -32,24 +32,39 @@
   function groupFlows(flows, countries, kind = "flows", limit = 80) {
     const groups = new Map(), nodes = new Map();
     for (const flow of flows) {
-      const src = endpointNode(flow.src, flow.src_country, countries), dst = endpointNode(flow.dst, flow.dst_country, countries);
-      const service = flow.service || flow.proto;
-      const key = JSON.stringify([src.key, dst.key, service, flow.proto, flow.dport || "", kind]);
-      if (!groups.has(key)) groups.set(key, {key, src, dst, service, color:routeColor(flow, kind),
-        count:0, totalBytes:null, flows:[], animate:kind !== "drops" && !flow.ended_at});
-      const group = groups.get(key);
-      group.count++; group.flows.push(flow);
-      group.animate = group.animate || (kind !== "drops" && !flow.ended_at);
-      const counters = [flow.tx_bytes,flow.rx_bytes].filter(value => Number.isFinite(value) && value >= 0);
-      if (counters.length) group.totalBytes = (group.totalBytes || 0) + counters.reduce((sum,value)=>sum+value,0);
-      if (kind === "history") group.animate = group.totalBytes > 0;
-      nodes.set(src.key, src); nodes.set(dst.key, dst);
+      const src = endpointNode(flow.src, flow.src_country, countries);
+      const targets = new Map();
+      if (kind === "drops" && flow.dns_questions) {
+        for(const candidate of flow.dns_country_candidates || []) {
+          const country=candidate.country;
+          if(country?.kind !== "country" || !countries[country.code])continue;
+          const node=endpointNode(candidate.address,country,countries);
+          node.key="dns-"+node.key;node.label+="（DNS推定）";node.dnsInferred=true;
+          targets.set(node.key,node);
+        }
+        if(!targets.size)targets.set("unknown",endpointNode("",null,countries));
+      } else {
+        const dst=endpointNode(flow.dst,flow.dst_country,countries);targets.set(dst.key,dst);
+      }
+      for(const dst of targets.values()) {
+        const service = flow.service || flow.proto;
+        const key = JSON.stringify([src.key, dst.key, service, flow.proto, flow.dport || "", kind]);
+        if (!groups.has(key)) groups.set(key, {key, src, dst, service, color:routeColor(flow, kind),
+          count:0, totalBytes:null, flows:[], animate:kind !== "drops" && !flow.ended_at});
+        const group = groups.get(key);
+        group.count++; group.flows.push(flow);
+        group.animate = group.animate || (kind !== "drops" && !flow.ended_at);
+        const counters = [flow.tx_bytes,flow.rx_bytes].filter(value => Number.isFinite(value) && value >= 0);
+        if (counters.length) group.totalBytes = (group.totalBytes || 0) + counters.reduce((sum,value)=>sum+value,0);
+        if (kind === "history") group.animate = group.totalBytes > 0;
+        nodes.set(src.key, src); nodes.set(dst.key, dst);
+      }
     }
     const all = [...groups.values()].sort((a,b) => (kind === "history" ? (b.totalBytes || 0) - (a.totalBytes || 0) : 0) || b.count - a.count || (b.totalBytes || 0) - (a.totalBytes || 0) || a.key.localeCompare(b.key));
     const visible = all.slice(0, limit), visibleNodes = new Map();
     for (const group of visible) { visibleNodes.set(group.src.key, group.src); visibleNodes.set(group.dst.key, group.dst); }
     return {routes:visible, nodes:[...visibleNodes.values()], totalRoutes:all.length, totalFlows:flows.length,
-      countryCount:[...nodes.values()].filter(node => node.kind === "country").length};
+      countryCount:new Set([...nodes.values()].filter(node => node.kind === "country").map(node=>node.code)).size};
   }
   function quadratic(a, b, c, t) { return {x:(1-t)*(1-t)*a.x + 2*(1-t)*t*b.x + t*t*c.x, y:(1-t)*(1-t)*a.y + 2*(1-t)*t*b.y + t*t*c.y}; }
   function hash(text) { let n=0; for (const c of text) n=(n*31+c.charCodeAt(0))>>>0; return n; }
@@ -213,6 +228,12 @@
           const query = document.createElement("small");
           query.textContent = "DNS問い合わせ: " + (flow.dns_questions.map(q => q.name + " / " + q.type).join(" · ") || flow.dns_error || "内容不明");
           this.detail.append(query);
+          const addresses=(flow.dns_country_candidates || []).filter(candidate=>!route.dst.code || candidate.country?.code===route.dst.code);
+          for(const candidate of addresses.slice(0,4)) {
+            const evidence=document.createElement("small");
+            evidence.textContent=`過去のDNS応答: ${candidate.domain} → ${candidate.address} / ${new Date(candidate.observed_at*1000).toLocaleString("ja-JP")}`;
+            this.detail.append(evidence);
+          }
         }
         if (flow.domain_hints?.length) {
           const hint = document.createElement("small");
@@ -221,8 +242,10 @@
         }
       }
       if (route.count > 8) { const remaining=document.createElement("small"); remaining.textContent=`ほか ${route.count-8} セッション`; this.detail.append(remaining); }
-      const button=document.createElement("button"); button.className="export"; button.textContent="このIPを表で確認";
-      button.addEventListener("click", () => this.onInspect(route.flows[0].dst)); this.detail.append(button);
+      const button=document.createElement("button"); button.className="export";
+      const question=route.flows[0].dns_questions?.[0]?.name;
+      button.textContent=question ? "このDNS問い合わせを表で確認" : "このIPを表で確認";
+      button.addEventListener("click", () => this.onInspect(question || route.flows[0].dst)); this.detail.append(button);
     }
     resize() {
       const rect = this.canvas.parentElement.getBoundingClientRect();

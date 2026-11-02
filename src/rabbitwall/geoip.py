@@ -86,5 +86,8 @@ class CountryLookup:
             for flow in state.get(section, []):
                 flow["src_country"] = self.lookup(flow["src"])
                 flow["dst_country"] = self.lookup(flow["dst"])
+                if section == "drops":
+                    for candidate in flow.get("dns_country_candidates", [])[:8]:
+                        candidate["country"] = self.lookup(candidate["address"])
         state["geoip"] = self.status()
         return state

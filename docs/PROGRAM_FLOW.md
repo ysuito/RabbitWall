@@ -89,7 +89,11 @@ flowchart TB
     Journal --> State
     NFLOG["nftables DNS drop copies / group 100"] --> DropDNS["dns_drops.Observer / libnetfilter_log → decode_packet() / dnspython"]
     DropDNS --> Ring["5 min / 200 parsed questions in memory"]
-    Ring --> State
+    Ring --> Infer["drop_country_candidates(): passive historical DNS IPs"]
+    Observe --> Answers["record_answer_history(): 30 days / 10000 records"]
+    Answers --> AnswerDB[("history.sqlite3 / dns_answer_history")]
+    AnswerDB --> Infer
+    Infer --> State
     State -.-> JSON["state.json"]
 ```
 
@@ -252,7 +256,7 @@ Helpers and methods are included; constructors and generated code are omitted. S
 
 ### [src/rabbitwall/dns_observations.py](../src/rabbitwall/dns_observations.py)
 
-`load_observations()`, `domain_hints()`
+`load_observations()`, `domain_hints()`, `normalized_domain()`, `record_answer_history()`, `drop_country_candidates()`
 
 ### [src/rabbitwall/dnstap_observer.py](../src/rabbitwall/dnstap_observer.py)
 

@@ -172,7 +172,7 @@ function render() {
   renderAnalytics();
   const search = $("search").value.toLowerCase(), scope = $("scope").value, proto = $("proto").value;
   const matches = f => (scope === "all" || (scope === "related" ? ["AI", "MANAGEMENT"].includes(f.scope) : f.scope === scope)) && (proto === "all" || f.proto === proto) &&
-    [...(f.domain_hints || []).map(h => h.domain), ...(f.dns_questions || []).flatMap(q=>[q.name,q.type]), f.dns_error, f.src, f.dst, f.sport, f.dport, f.proto, f.service, f.state, f.chain, direction(f), countryText(f.src_country), countryText(f.dst_country)].join(" ").toLowerCase().includes(search);
+    [...(f.domain_hints || []).map(h => h.domain), ...(f.dns_questions || []).flatMap(q=>[q.name,q.type]), ...(f.dns_country_candidates || []).flatMap(c=>[c.address,countryText(c.country)]), f.dns_error, f.src, f.dst, f.sport, f.dport, f.proto, f.service, f.state, f.chain, direction(f), countryText(f.src_country), countryText(f.dst_country)].join(" ").toLowerCase().includes(search);
   const rows = snapshot[tab].filter(matches);
   $("row-count").textContent = rows.length + " 件";
   atlas.update(rows, {kind:tab, stale:snapshot.stale || !snapshot.collector_ok, network:snapshot.network});
@@ -198,7 +198,14 @@ function render() {
       dstCell.append(hints);
       if (f.domain_hints.some(h => h.is_new)) dstCell.append(newDomainBadge());
     }
-    cell(row, countryText(f.dst_country), "country");
+    const destinationCountry=cell(row, countryText(f.dst_country), "country");
+    if(tab === "drops" && f.dns_questions) {
+      const estimate=document.createElement("small");estimate.className="endpoint-country";
+      const names=[...new Set((f.dns_country_candidates || []).filter(c=>c.country?.kind === "country").map(c=>countryText(c.country)))];
+      estimate.textContent="DNS推定国: " + (names.join(" / ") || "地域不明");
+      estimate.title="過去のDNS応答IPからの推定です。実際の問い合わせ先や現在の接続先の国ではありません。";
+      destinationCountry.append(estimate);
+    }
     cell(row, tab === "drops" ? f.proto : f.service + " / " + f.proto);
     const status = tab === "drops" ? f.chain + " DROP" : tab === "history" ? f.ended_at ? "観測終了" : "追跡中" : f.state;
     const td = cell(row, ""), badge = document.createElement("span"); badge.textContent = status;

@@ -149,3 +149,22 @@ assert.equal(groupFlows([{...flow,tx_bytes:-1,rx_bytes:NaN}],world.countries,"hi
 assert.equal(byteLabel(null),"通信量不明");assert.equal(byteLabel(1024**3),"1.0 GB");
 assert.deepEqual(routeVisual({count:1,totalBytes:1},"flows"),routeVisual({count:1,totalBytes:1024**3},"flows"));
 console.log("Session atlas: historical byte volume controls bounded line width, particle count, period and route priority.");
+
+// Dropped DNS is drawn toward historical country candidates, never toward its local resolver.
+const dnsDrop={...flow,proto:'UDP',service:'DNS',dport:53,dst:'10.1.0.1',dst_country:privateIP,
+  dns_questions:[{name:'example.com.',type:'AAAA'}],tx_bytes:null,rx_bytes:null};
+assert.equal(groupFlows([dnsDrop],world.countries,'drops').routes[0].dst.kind,'unknown');
+const inferred={...dnsDrop,dns_country_candidates:[
+  {address:'8.8.8.8',country:us}, {address:'1.1.1.1',country:us},
+  {address:'1.0.0.1',country:{kind:'country',code:'AU'}}]};
+const map=groupFlows([inferred],world.countries,'drops');
+assert.equal(map.totalFlows,1);assert.equal(map.totalRoutes,2);assert.equal(map.countryCount,2);
+assert.deepEqual(new Set(map.routes.map(route=>route.dst.code)),new Set(['US','AU']));
+assert.ok(map.routes.every(route=>route.dst.dnsInferred && route.dst.label.includes('DNS推定') && !route.animate));
+assert.equal(inferred.dst,'10.1.0.1');assert.equal(inferred.dst_country,privateIP);
+assert.equal(groupFlows([inferred,flow],world.countries,'drops').countryCount,2);
+const noGeo={...dnsDrop,dns_country_candidates:[{address:'8.8.8.8',country:{kind:'unknown'}}]};
+assert.equal(groupFlows([noGeo],world.countries,'drops').routes[0].dst.kind,'unknown');
+// Other views continue to use actual IP endpoints, not speculative DNS geography.
+assert.equal(groupFlows([inferred],world.countries,'flows').routes[0].dst.kind,'local');
+console.log('Session atlas: passive DNS-country candidates, multi-country fanout, unknown fallback and real endpoints passed.');

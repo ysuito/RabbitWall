@@ -19,7 +19,7 @@ import threading
 from urllib.parse import urlsplit
 from control import TOKEN, request_control, validate_duration
 from geoip import CountryLookup, DEFAULT_DATABASE
-from dns_observations import load_observations, domain_hints
+from dns_observations import load_observations, domain_hints, record_answer_history, drop_country_candidates
 from traffic_analytics import collect_analytics
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, metadata, load
 import node_config
@@ -184,6 +184,7 @@ def atomic_json(path, data):
 def collect_once(db, state_path, interval, dns_drops=None):
     now, errors = utc_now(), []
     dns_records = load_observations()
+    record_answer_history(db, dns_records, dt.datetime.fromisoformat(now).timestamp())
     raw, error = command(["conntrack", "-L", "-f", "ipv4", "-o", "extended,id"])
     if error:
         errors.append(error)
@@ -201,6 +202,7 @@ def collect_once(db, state_path, interval, dns_drops=None):
         errors.append(journal_error)
     dropped, drop_error = dns_drops.snapshot() if dns_drops is not None else ([], None)
     for entry in dropped:
+        entry['dns_country_candidates'] = drop_country_candidates(db, entry, dt.datetime.fromisoformat(now).timestamp())
         entry['scope'] = flow_scope(entry['src'], entry['dst'])
         if entry['chain'] == 'input' and not entry.get('in'): entry['chain'] = 'output'
     if drop_error: errors.append(drop_error)
@@ -233,10 +235,17 @@ def demo_state():
         if flow['scope'] == 'AI':
             flow['tx_bytes'] *= 3; flow['rx_bytes'] *= 4
     analytics = collect_analytics(demo_db, flows, [], now)
+    observed = [hint for flow in flows for hint in flow.get('domain_hints', [])]
+    record_answer_history(demo_db, observed, dt.datetime.fromisoformat(now).timestamp())
+    country_drop = {"time":now, "scope":"AI", "chain":"input", "src":host,
+                    "dst":str(AI_IP), "proto":"UDP", "sport":"50322", "dport":"53",
+                    "in":SETTINGS['ai_if'], "out":"", "dns_reason":"closed",
+                    "dns_questions":[{"name":"one.one.one.one.", "type":"A"}], "dns_error":None}
+    country_drop['dns_country_candidates'] = drop_country_candidates(demo_db, country_drop, dt.datetime.fromisoformat(now).timestamp())
     demo_db.close()
     return {"analytics": analytics, "updated_at": now, "interval": 5, "demo": True, "collector_ok": True,
             "errors": [], "flows": flows, "history": [dict(f, ended_at=None) for f in flows],
-            "drops": [{"time": now, "scope": "AI", "chain": "forward", "src": next((n['ip'] for n in SETTINGS['nodes'] if n['interface']==SETTINGS['ai_if']), AI_IP),
+            "drops": [country_drop, {"time": now, "scope": "AI", "chain": "forward", "src": next((n['ip'] for n in SETTINGS['nodes'] if n['interface']==SETTINGS['ai_if']), AI_IP),
                        "dst": SETTINGS['admin_ip'], "proto": "TCP", "sport": "50123", "dport": "22",
                        "in": SETTINGS["ai_if"], "out": SETTINGS["uplink_if"]},
                       {"time":now, "scope":"AI", "chain":"input", "src":host,
