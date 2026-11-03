@@ -159,6 +159,6 @@ class Approvals:
                 record = grant['records'].get(name,{})
                 records.append({'domain':name, 'addresses':record.get('addresses',[]) if record.get('until',0)>now else [],
                                 'error':record.get('error'), 'resolving':not bool(record)})
-            result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','expires_at')} |
+            result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','duration_seconds','expires_at')} |
                           {'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
         return result

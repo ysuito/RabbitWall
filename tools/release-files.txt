@@ -83,3 +83,11 @@ docs/DOMAIN_APPROVALS.md
 docs/DOMAIN_APPROVALS.ja.md
 examples/AGENTS.network-approval.md
 examples/AGENTS.network-approval.ja.md
+
+src/rabbitwall/domain_requests.py
+src/rabbitwall/request_api.py
+systemd/rabbitwall-requests.service
+tests/test_domain_requests.py
+
+src/rabbitwall/static/request-notifications.js
+tests/test_request_notifications.cjs

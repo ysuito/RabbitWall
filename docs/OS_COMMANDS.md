@@ -28,7 +28,7 @@ The web service does not execute these commands. It sends control requests over 
 | Command | Caller / purpose |
 | --- | --- |
 | `systemctl is-active --quiet <service>` | `setup.py check`: require NetworkManager; detect conflicting ufw, firewalld, docker and default unbound services |
-| `ss -H -lntup 'sport = :<port>'` | Inspect bind conflicts on ports 53, 443 and 8765 |
+| `ss -H -lntup 'sport = :<port>'` | Inspect bind conflicts on ports 53, 443, 8765 and 8767 |
 | `ip -j -4 addr` | Verify configured IPv4 addresses are active, including after reconfiguration |
 | `unbound -V` | Verify the Unbound build supports dnstap |
 | `unbound-checkconf <temporary-config>` | Validate generated Unbound configuration |

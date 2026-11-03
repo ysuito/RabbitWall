@@ -63,6 +63,7 @@ class DomainApprovals(unittest.TestCase):
             spec=domains.validate_request(SETTINGS,payload(duration_seconds=60))
             manager.approve(SETTINGS,spec);manager.tick()
             self.assertEqual(manager.snapshot()[0]['records'][0]['addresses'],['1.1.1.1'])
+            self.assertEqual(manager.snapshot()[0]['duration_seconds'],60)
             script=nft.call_args[0][1]
             self.assertIn('10.1.0.10 . 1.1.1.1 timeout 10000ms',script)
             self.assertNotIn('online_sources',script)

@@ -50,10 +50,10 @@ def init(path, defaults=False):
 def assets(config):
     """Render a complete dedicated-router firewall; never merge arbitrary host rules."""
     c = validate(config)
-    from firewall import baseline, gate, dns_rule, probe_rules, SYSCTL
+    from firewall import baseline, gate, dns_rule, probe_rules, request_rule, SYSCTL
     from unbound_config import render
     firewall = baseline(c)
-    gate_rules = gate(c) + dns_rule(c) + probe_rules(c)
+    gate_rules = gate(c) + dns_rule(c) + probe_rules(c) + request_rule(c)
     sysctl = SYSCTL
     result = {'unbound.conf':render(c), 'rabbitwall.nft':gate_rules, 'nftables.conf':firewall, '90-rabbitwall-router.conf':sysctl,
               'rabbitwall-monitor.conf':'nf_conntrack\n',
@@ -106,7 +106,7 @@ No packages, network or services have been changed by this plan command.
 
 
 def port_conflicts(output, port, config):
-    target = str(ipaddress.IPv4Interface(config['ai_cidr'] if port==53 else config['uplink_cidr']).ip) if port!=8765 else '127.0.0.1'
+    target = str(ipaddress.IPv4Interface(config['ai_cidr'] if port in (53,8767) else config['uplink_cidr']).ip) if port!=8765 else '127.0.0.1'
     for line in output.splitlines():
         fields=line.split()
         if len(fields)<5: continue
@@ -135,7 +135,7 @@ def check(config, require_addresses=False, inspect_ports=True):
         require_unbound()
     except ValueError as error: errors.append(str(error))
     if inspect_ports and shutil.which('ss'):
-        for port in (53,443,8765):
+        for port in (53,443,8765,8767):
             result = subprocess.run(['ss','-H','-lntup',f'sport = :{port}'],capture_output=True,text=True)
             if result.returncode: errors.append('Could not inspect listening ports with ss')
             elif port_conflicts(result.stdout,port,config): errors.append(f'Port {port} conflicts with the configured bind address; inspect sudo ss -lntup.')
@@ -225,7 +225,7 @@ def install(plan_dir, apply, reapply=False):
     (backup/'restore.sh').write_text('''#!/bin/sh
 set -eu
 base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-systemctl disable --now rabbitwall-dns-observer rabbitwall-dns rabbitwall-web rabbitwall-control rabbitwall-collector rabbitwall-caddy 2>/dev/null || true
+systemctl disable --now rabbitwall-dns-observer rabbitwall-dns rabbitwall-web rabbitwall-requests rabbitwall-control rabbitwall-collector rabbitwall-caddy 2>/dev/null || true
 nft -f "$base/runtime.nft"
 if [ ! -f "$base/nftables-was-enabled" ]; then systemctl disable nftables; fi
 for file in /etc/nftables.conf /etc/rabbitwall.json /etc/nftables.d/rabbitwall.nft /etc/NetworkManager/conf.d/90-rabbitwall-ai.conf /etc/sysctl.d/90-rabbitwall-router.conf /etc/modules-load.d/rabbitwall-monitor.conf /etc/rabbitwall-mtls/Caddyfile /etc/nftables.d/rabbitwall-web.nft /etc/rabbitwall-unbound.conf /etc/rabbitwall-nodes/nodes.json; do
@@ -243,7 +243,7 @@ echo 'Saved configuration restored. Reboot locally to reactivate the original pr
 '''.replace('systemctl disable --now rabbitwall-', 'systemctl stop rabbitwall-' if reapply else 'systemctl disable --now rabbitwall-'));(backup/'restore.sh').chmod(0o700)
     print(f'Network backup and recovery: {backup}/restore.sh', flush=True)
     if reapply:
-        for service in ('rabbitwall-caddy','rabbitwall-web','rabbitwall-collector',
+        for service in ('rabbitwall-caddy','rabbitwall-web','rabbitwall-requests','rabbitwall-collector',
                         'rabbitwall-dns-observer','rabbitwall-dns','rabbitwall-control'):
             state = subprocess.check_output(['systemctl','show','-p','LoadState','--value',service],text=True).strip()
             if state != 'not-found': run('systemctl','stop',service)

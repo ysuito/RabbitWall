@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-SERVICES = ('rabbitwall-control', 'rabbitwall-dns', 'rabbitwall-dns-observer', 'rabbitwall-collector', 'rabbitwall-web')
+SERVICES = ('rabbitwall-control', 'rabbitwall-dns', 'rabbitwall-dns-observer', 'rabbitwall-collector', 'rabbitwall-web', 'rabbitwall-requests')
 
 
 def run(*args):
@@ -81,7 +81,7 @@ def deploy(config):
             destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             shutil.copy2(target, destination)
     print(f'Application backup: {backup}', flush=True)
-    for group in ('rabbitwall-control', 'rabbitwall-dns', 'rabbitwall-read'):
+    for group in ('rabbitwall-control', 'rabbitwall-dns', 'rabbitwall-read', 'rabbitwall-requests'):
         try: grp.getgrnam(group)
         except KeyError: run('groupadd', '--system', group)
     try: pwd.getpwnam('rabbitwall-dns')

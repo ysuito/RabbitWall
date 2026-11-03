@@ -1,9 +1,12 @@
 # Network access policy
 
-- Internet access requires explicit human approval through RabbitWall.
-- Before a network operation, present the exact destination domains, purpose and requested duration (1, 5 or 30 minutes). Provide a separate plain list, one domain per line, suitable for pasting into RabbitWall.
-- Wait for the human to confirm approval before connecting. A request or an existing connection is not approval.
-- Include dependency registries, download hosts and API hosts you can identify from local project files. If a redirect or another missing host becomes necessary, stop and request an updated domain list; do not assume permission extends to subdomains.
-- Do not bypass a denial through literal IPs, alternate resolvers, proxies, VPNs, tunnels, changes to network settings or repeated retries.
-- Never obtain or use RabbitWall's management certificate, control token or administrator API. Only the human approves, extends or opens access.
-- Report completion so the human can revoke access early. If permission expires, request approval again.
+- External access requires explicit human approval in RabbitWall.
+- The request API is `http://10.1.0.1:8767`. The administrator must replace this with the gateway's actual downlink IPv4 address. Local API calls to submit requests and check their status are permitted.
+- Before external access, inspect local project configuration to identify the exact domains, purpose and shortest necessary duration (60, 300 or 1800 seconds). Send JSON to `POST /api/domain-requests`, for example `{"domains":["github.com","api.github.com"],"duration_seconds":300,"purpose":"Download dependencies"}`. Set `Content-Type: application/json`, bypass proxies and connect directly. Do not supply a node ID or source address.
+- Save `request.id` from HTTP 201 and ask the administrator to review the domains, purpose and duration in the console. Submission and an existing connection do not imply approval.
+- Poll `GET /api/domain-requests/<request.id>` from the same host at intervals of at least five seconds. Wait while `request.status` is `pending`. Connect only after it is `approved` and the domain's `request.approval.records` entry contains public IPv4 `addresses`.
+- Stop external access on `rejected`, `ended`, errors or missing requests. Pending requests disappear after ten minutes. Do not submit duplicates while pending; wait at least ten seconds after HTTP 429. Do not automatically resubmit rejected requests; await administrator instructions. Continuing after expiry requires a new request and approval.
+- Subdomains and redirect destinations require individual approval. Stop and submit a new complete domain list when additional destinations are needed. Include domains still needed because approval replaces the previous grant for the node.
+- Do not bypass restrictions using direct IPs, another DNS server, proxies, VPNs, tunnels, network changes or repeated retries.
+- Never obtain or use RabbitWall management certificates, control tokens or administrator APIs. Approval, revocation, extension and full opening belong to the human administrator. Do not include secrets in the purpose.
+- Report completion and ask the administrator to revoke access early.

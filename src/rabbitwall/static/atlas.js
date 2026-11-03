@@ -101,7 +101,7 @@
       this.rows = []; this.model = groupFlows([], {}); this.kind = "flows";
       this.active = false; this.paused = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       this.initialPaused=this.paused;
-      this.offset={x:0,y:0};this.zoom=1;this.drag=null;this.panFrame=null;this.suppressClick=false;this.theme="amber";
+      this.offset={x:0,y:0};this.zoom=1;this.drag=null;this.panFrame=null;this.suppressClick=false;this.theme="green";
       this.stale = false; this.selected = null; this.animation = null; this.points = new Map(); this.paths = [];
       this.background = document.createElement("canvas");
       this.observer = new ResizeObserver(() => this.resize()); this.observer.observe(this.canvas.parentElement);
@@ -121,7 +121,7 @@
     }
     color(value) { return SessionAtlas.themes[this.theme]?.[value] || value; }
     setTheme(name) {
-      this.theme=Object.hasOwn(SessionAtlas.themes,name) ? name : "amber";
+      this.theme=Object.hasOwn(SessionAtlas.themes,name) ? name : "green";
       this.paintBackground();this.draw(performance.now());
     }
     resetPosition() {

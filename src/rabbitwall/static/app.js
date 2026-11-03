@@ -5,6 +5,117 @@ let controlReceivedAt = performance.now();
 let controlAuthorized = false;
 let nodeSettings=null, nodeDraft=[], nodeDirty=false, nodeBusy=false;
 const $ = id => document.getElementById(id);
+const requestNotifications = new window.RequestNotifications();
+const requestSound = new window.RequestSound(() => {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) throw new Error("Audio is unavailable");
+  return new Audio();
+}, () => window.localStorage);
+let alertRequestIds = [], requestListSignature = null, pendingChime = false;
+let bannerSignature = null, bannerFeedback = "", bannerFeedbackState = "";
+function renderSoundButton() {
+  const waiting=requestSound.enabled && !requestSound.ready;
+  $("request-sound").textContent = requestSound.enabled ? waiting ? "通知音 有効 · 待機" : "通知音 有効" : "通知音 無効";
+  $("request-sound").setAttribute("aria-pressed", String(requestSound.enabled));
+  $("request-sound").title = waiting ? "設定は有効です。画面を操作すると音声再生を再開します。" : "通知音の設定をこのブラウザーに保存します";
+}
+function soundUnavailable() { renderSoundButton(); }
+function connectionLog(item, status="") {
+  const log=document.createElement("div");log.className="connection-log";
+  const primary=document.createElement("div");primary.className="log-primary";
+  const createdAt=item.created_at || (item.expires_at && Number.isFinite(item.duration_seconds)
+    ? new Date(Date.parse(item.expires_at)-item.duration_seconds*1000).toISOString() : null);
+  if(createdAt){
+    const time=document.createElement("time");time.className="log-time";time.dateTime=createdAt;
+    time.textContent=new Date(createdAt).toLocaleString("ja-JP",{hour12:false});primary.append(time);
+  }
+  const fields=[
+    ["src","Src",item.source+" ("+item.node_name+")"],
+    ["dst","Dst",item.domains.join(", ")],
+    ["duration","Duration",Number.isFinite(item.duration_seconds) ? (item.duration_seconds/60)+"分" : "—"]
+  ];
+  if(status)fields.push(["status","Status",status]);
+  for(const [name,label,value] of fields){
+    const field=document.createElement("span");field.className="log-field log-"+name;
+    const key=document.createElement("span");key.className="log-key";key.textContent=label+":";
+    const text=document.createElement("span");text.className="log-value";text.textContent=value;
+    field.append(key,text);primary.append(field);
+  }
+  const purpose=document.createElement("p");purpose.className="log-purpose";
+  const label=document.createElement("span");label.className="log-key";label.textContent="目的：";
+  const value=document.createElement("span");value.className="log-value";value.textContent=item.purpose;
+  purpose.append(label,value);log.append(primary,purpose);
+  return log;
+}
+function updateRequestBanner(pending) {
+  const visible=pending.filter(item=>item.status==="pending" && alertRequestIds.includes(item.id));
+  const show=visible.length>0 || Boolean(bannerFeedback);
+  $("request-alert").hidden=!show;
+  document.body.classList.toggle("has-request-alert",show);
+  if(!show)return;
+  $("request-alert-text").textContent=visible.length ? "接続申請 · 承認待ち "+visible.length+"件" : "申請の処理結果";
+  $("request-alert-message").textContent=bannerFeedback;
+  $("request-alert-message").hidden=!bannerFeedback;
+  $("request-alert-message").dataset.state=bannerFeedbackState;
+  const known=Boolean(control?.available && !control.error);
+  const signature=JSON.stringify([visible,controlBusy,controlAuthorized,known]);
+  if(signature===bannerSignature)return;
+  bannerSignature=signature;
+  const list=$("request-alert-list");list.replaceChildren();
+  for(const item of visible){
+    const row=document.createElement("article");row.className="banner-request";row.setAttribute("aria-label",item.node_name+"の接続申請");
+    const content=document.createElement("div");content.className="banner-request-content";
+    content.append(connectionLog(item));
+    const actions=document.createElement("div");actions.className="banner-request-actions";
+    for(const [action,label] of [["approve_request","承認"],["reject_request","却下"]]){
+      const button=document.createElement("button");button.type="button";button.className=action==="approve_request" ? "banner-approve" : "banner-reject";button.textContent=label;
+      button.disabled=controlBusy || !controlAuthorized || !known;
+      button.setAttribute("aria-label",item.domains.join(", ")+"への申請を"+label);
+      button.addEventListener("click",()=>decideBannerRequest(action,item.id));actions.append(button);
+    }
+    row.append(content,actions);list.append(row);
+  }
+  $("request-alert-auth").hidden=!visible.length || controlAuthorized;
+}
+async function decideBannerRequest(action,id){
+  if(controlBusy || !controlAuthorized || !control?.available || control.error)return;
+  bannerFeedback=action==="approve_request" ? "承認を反映しています…" : "却下を反映しています…";
+  bannerFeedbackState="busy";
+  const ok=await changeDomains(action,{id});
+  if(ok){
+    bannerFeedback=action==="approve_request" ? "" : "却下しました。"+(controlDemo ? "（試験表示・実通信なし）" : "");
+    bannerFeedbackState=bannerFeedback ? "success" : "";
+  }else{
+    bannerFeedback=$("approval-message").textContent;
+    bannerFeedbackState="error";
+  }
+  updateRequestBanner(control?.domain_requests || []);
+}
+function dismissRequestBanner() {
+  alertRequestIds=[];bannerFeedback="";bannerSignature=null;$("request-alert").hidden=true;
+  document.body.classList.remove("has-request-alert");
+}
+function renderRequestNotifications() {
+  if (!control?.available || control.error) {
+    document.querySelectorAll("#request-alert-list button").forEach(button=>{button.disabled=true;});
+    bannerSignature=null;
+    return;
+  }
+  const {pending, added} = requestNotifications.update(control.domain_requests || []);
+  $("request-count").hidden = pending.length === 0;
+  $("request-count").textContent = pending.length;
+  $("request-count").setAttribute("aria-label", "承認待ち"+pending.length+"件");
+  $("pending-summary").textContent = "承認待ち "+pending.length+"件";
+  const nav = document.querySelector('[data-nav="approvals"]');
+  nav.classList.toggle("has-requests", pending.length > 0);
+  if (added.length) {
+    alertRequestIds = pending.map(item=>item.id);
+    bannerFeedback="";bannerFeedbackState="";
+    try { requestSound.play(); } catch (_) { pendingChime=requestSound.enabled; soundUnavailable(); }
+  }
+  if(!pending.length)pendingChime=false;
+  updateRequestBanner(pending);
+}
 let sessionView = "map";
 const atlas = new window.SessionAtlas({canvas:$("atlas-canvas"), list:$("atlas-routes"),
   detail:$("atlas-detail"), summary:$("atlas-summary"), onInspect:address => {
@@ -43,7 +154,7 @@ function direction(flow) {
   return flow.scope === "MANAGEMENT" ? rabbitwall ? "LAN → RabbitWall" : "LAN → AI" : flow.scope === "RABBITWALL" ? "RabbitWall発信" : rabbitwall ? "AI → RabbitWall" : "AI → 上流";
 }
 function navigate() {
-  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析",approvals:"ドメイン一時許可"};
+  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析",approvals:"一時許可"};
   const page = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : "monitor";
   for (const element of document.querySelectorAll("[data-page]")) element.hidden = element.dataset.page !== page;
   for (const link of document.querySelectorAll("[data-nav]")) {
@@ -304,14 +415,14 @@ navigate();
 refreshControl();
 
 function applyTheme(value) {
-  const name = Object.hasOwn(window.SessionAtlas.themes,value) ? value : "amber";
+  const name = Object.hasOwn(window.SessionAtlas.themes,value) ? value : "green";
   document.documentElement.dataset.theme=name;
   $("color-scheme").value=name;
   atlas.setTheme(name);
   return name;
 }
-let savedTheme="amber";
-try { savedTheme=localStorage.getItem("rabbitwall-color-scheme") || "amber"; } catch (_) {}
+let savedTheme="green";
+try { savedTheme=localStorage.getItem("rabbitwall-color-scheme") || "green"; } catch (_) {}
 applyTheme(savedTheme);
 $("color-scheme").addEventListener("change",()=>{
   const name=applyTheme($("color-scheme").value);
@@ -402,7 +513,7 @@ $("node-form").addEventListener("submit",async event=>{
 
 document.querySelectorAll("[data-duration]").forEach(button => button.addEventListener("click", () => setInternet(true, Number(button.dataset.duration))));
 
-setInterval(renderGateTimer, 1000);
+setInterval(()=>{renderGateTimer();renderApprovalTimers();}, 1000);
 
 
 async function loadApprovalNodes() {
@@ -422,24 +533,64 @@ async function loadApprovalNodes() {
 }
 function renderApprovals(){
   const known=control?.available && !control.error;
+  renderRequestNotifications();
   document.querySelector('[data-page="approvals"]').dataset.state=known ? control.enabled ? "active" : "closed" : "unknown";
   $("approval-mode").textContent=!known ? "状態不明" : control.mode === "restricted" ? "限定開放" : control.enabled ? "開放" : "閉塞";
   $("approval-submit").disabled=controlBusy || !controlAuthorized || !$("approval-node").options.length;
-  const list=$("approval-list");list.replaceChildren();
+  const items=control?.domain_requests || [];
+  const signature=JSON.stringify([items,controlBusy,controlAuthorized]);
+  if(signature!==requestListSignature){
+    requestListSignature=signature;
+    const requests=$("domain-request-list"),history=$("domain-request-history");requests.replaceChildren();history.replaceChildren();
+    const labels={approved:"承認済み",rejected:"却下",ended:"終了"};
+    for(const item of [...items].reverse()){
+      const entry=document.createElement("article");entry.className="approval-entry request-entry";
+      const main=document.createElement("div");main.className="approval-main";
+      main.append(connectionLog(item,item.status==="pending" ? "" : (labels[item.status] || item.status)));entry.append(main);
+      if(item.status==="pending"){
+        const actions=document.createElement("div");actions.className="request-actions";
+        for(const [action,label] of [["approve_request","承認"],["reject_request","却下"]]){
+          const button=document.createElement("button");button.type="button";button.className=action==="approve_request" ? "primary" : "secondary";button.textContent=label;
+          button.disabled=controlBusy || !controlAuthorized;
+          button.addEventListener("click",()=>changeDomains(action,{id:item.id}));actions.append(button);
+        }
+        entry.append(actions);requests.append(entry);
+      }else history.append(entry);
+    }
+    $("request-history").hidden=!history.children.length;
+    $("request-history-summary").textContent="処理済み "+history.children.length+"件";
+    if(!requests.children.length){const empty=document.createElement("p");empty.className="approval-empty";empty.textContent=known ? "承認待ちの申請はありません" : "申請を確認できません";requests.append(empty);}
+  }
+  const list=$("approval-list");
+  const expanded=new Set([...list.querySelectorAll("details[open]")].map(detail=>detail.dataset.grantId));
+  list.replaceChildren();
   for(const grant of control?.domain_approvals || []){
-    const entry=document.createElement("article");entry.className="approval-entry";
-    const title=document.createElement("h3");title.textContent=grant.node_name+" / "+grant.source;
-    const purpose=document.createElement("p");purpose.textContent=grant.purpose;
-    const until=document.createElement("p");until.textContent="期限: "+new Date(grant.expires_at).toLocaleString("ja-JP",{hour12:false});
+    const entry=document.createElement("article");entry.className="approval-entry grant-entry";
+    const main=document.createElement("div");main.className="approval-main";
+    main.append(connectionLog(grant));
+    const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent="接続先の状態";detail.dataset.grantId=grant.id;detail.open=expanded.has(grant.id);detail.append(summary);
     const records=document.createElement("ul");
     for(const record of grant.records || []){
       const line=document.createElement("li");line.textContent=record.domain+" → "+(record.addresses.length ? record.addresses.join(", ") : record.error || "DNSを確認中・通信は未許可");records.append(line);
     }
-    const revoke=document.createElement("button");revoke.type="button";revoke.className="secondary";revoke.textContent="許可を取り消す";
+    const revoke=document.createElement("button");revoke.type="button";revoke.className="secondary";revoke.textContent="取消";
     revoke.disabled=controlBusy || !controlAuthorized;revoke.addEventListener("click",()=>changeDomains("revoke",{id:grant.id}));
-    entry.append(title,purpose,until,records,revoke);list.append(entry);
+    detail.append(records);main.append(detail);
+    const actions=document.createElement("div");actions.className="grant-actions";
+    const timer=document.createElement("span");timer.className="approval-countdown";timer.setAttribute("role","timer");timer.setAttribute("aria-live","off");
+    timer.dataset.remaining=grant.remaining_seconds;timer.dataset.receivedAt=controlReceivedAt;
+    timer.title="期限 "+new Date(grant.expires_at).toLocaleString("ja-JP",{hour12:false});
+    actions.append(timer,revoke);entry.append(main,actions);list.append(entry);
   }
-  if(!list.children.length){const empty=document.createElement("p");empty.textContent="有効な限定許可はありません。";list.append(empty);}
+  if(!list.children.length){const empty=document.createElement("p");empty.className="approval-empty";empty.textContent="許可中の通信はありません";list.append(empty);}
+  renderApprovalTimers();
+}
+function renderApprovalTimers(){
+  document.querySelectorAll(".approval-countdown").forEach(timer=>{
+    const seconds=window.remainingGrantSeconds(Number(timer.dataset.remaining),Number(timer.dataset.receivedAt),performance.now());
+    timer.textContent=seconds===null ? "残り時間を確認中" : seconds===0 ? "期限到達 · 確認中" : "残り "+String(Math.floor(seconds/60)).padStart(2,"0")+":"+String(seconds%60).padStart(2,"0");
+    timer.classList.toggle("ending",seconds!==null && seconds<=60);
+  });
 }
 async function changeDomains(action,request){
   if(controlBusy)return;
@@ -448,12 +599,48 @@ async function changeDomains(action,request){
     const response=await fetch("/api/domain-approvals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,request}),signal:AbortSignal.timeout(30000)});
     const data=await response.json();if(!response.ok)throw new Error(data.error || "操作に失敗しました");
     control=data.control;controlReceivedAt=performance.now();controlDemo=data.demo;
-    $("approval-message").textContent=controlDemo ? "試験表示：実際の通信許可やDNS照会は行っていません。" : action==="approve" ? "限定許可を反映しました。解決済みIPだけが接続可能になります。" : "許可を取り消しました。";
-  } catch(error){$("approval-message").textContent="結果を確認できません。再確認してください。"+error.message;}
+    $("approval-message").textContent=controlDemo ? "試験表示：実際の通信許可やDNS照会は行っていません。" : (action==="approve" || action==="approve_request") ? "限定許可を反映しました。解決済みIPだけが接続可能になります。" : action==="reject_request" ? "申請を却下しました。" : "許可を取り消しました。";
+    return true;
+  } catch(error){$("approval-message").textContent="結果を確認できません。再確認してください。"+error.message;return false;}
   finally{controlBusy=false;controlEpoch++;renderControl();}
 }
 $("approval-form").addEventListener("submit",event=>{
   event.preventDefault();
   const domains=$("approval-domains").value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
   changeDomains("approve",{node_id:$("approval-node").value,domains,duration_seconds:Number($("approval-duration").value),purpose:$("approval-purpose").value});
+});
+
+$("request-sound").addEventListener("click", async () => {
+  if (requestSound.enabled) { requestSound.disable(); pendingChime=false; renderSoundButton(); return; }
+  $("request-sound").disabled = true;
+  try { await requestSound.enable(); pendingChime=false; renderSoundButton(); }
+  catch (_) { soundUnavailable(); }
+  finally { $("request-sound").disabled = false; }
+});
+let restoringAudio=false;
+async function restoreRequestSound(){
+  if(!requestSound.enabled || requestSound.ready || restoringAudio)return;
+  restoringAudio=true;
+  try {
+    await requestSound.restore();
+    if(pendingChime && requestSound.enabled){requestSound.play();pendingChime=false;}
+  } catch (_) {} finally {restoringAudio=false;renderSoundButton();}
+}
+// Audio settings survive reloads; browsers may still require the next user gesture.
+for(const eventName of ["pointerdown","keydown"])document.addEventListener(eventName,event=>{
+  if(event.target.closest?.("#request-sound"))return;
+  // A resume started during page load can remain pending until this gesture.
+  if(requestSound.enabled && !requestSound.ready)requestSound.context?.resume().then(()=>{
+    if(pendingChime && requestSound.enabled){requestSound.play();pendingChime=false;}
+    renderSoundButton();
+  }).catch(soundUnavailable);
+});
+renderSoundButton();
+void restoreRequestSound();
+$("request-alert-close").addEventListener("click", dismissRequestBanner);
+$("approval-tips-open").addEventListener("click", () => { $("approval-tips").showModal(); });
+$("approval-tips-close").addEventListener("click", () => { $("approval-tips").close(); });
+$("approval-tips").addEventListener("click", event => {
+  const bounds=$("approval-tips").getBoundingClientRect();
+  if(event.target===$("approval-tips") && (event.clientX<bounds.left || event.clientX>bounds.right || event.clientY<bounds.top || event.clientY>bounds.bottom))$("approval-tips").close();
 });

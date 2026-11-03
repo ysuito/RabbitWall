@@ -24,6 +24,7 @@ from traffic_analytics import collect_analytics
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, metadata, load
 import node_config
 import domain_approvals
+from domain_requests import Requests
 
 AI = AI_INTERFACE.network
 LAN = ipaddress.ip_network(SETTINGS["management_cidr"])
@@ -298,6 +299,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
     demo_deadline = None
     demo_grants = {}
+    demo_requests = Requests()
 
     def control_status(action="status", duration_seconds=None):
         nonlocal demo_deadline
@@ -317,6 +319,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 demo_control['mode'] = 'restricted' if demo_grants else 'closed'
             demo_control['enabled'] = demo_control['mode'] != 'closed'
             demo_control['domain_approvals'] = [dict({k:v for k,v in g.items() if k!='_deadline'},remaining_seconds=max(0,g['_deadline']-time.monotonic())) for g in demo_grants.values()]
+            demo_control["domain_requests"] = demo_requests.snapshot(demo_control["domain_approvals"])
             demo_control["remaining_seconds"] = max(0, demo_deadline-time.monotonic()) if demo_deadline is not None else None
             demo_control["checked_at"] = utc_now()
             for node in demo_control["nodes"]:
@@ -327,6 +330,11 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
     demo_config = json.loads(json.dumps(SETTINGS))
     demo_lock = threading.Lock()
+    if demo:
+        node = next((n for n in demo_config['nodes'] if n['interface'] == demo_config['ai_if']), None)
+        if node:
+            demo_requests.submit(demo_config, node['ip'], {'domains':['example.com'], 'duration_seconds':300,
+                                 'purpose':'試験表示：依存パッケージの取得（実通信なし）'})
 
     def nodes_status(payload=None):
         nonlocal demo_config
@@ -344,7 +352,22 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
     def change_domains(action, request):
         nonlocal demo_deadline
-        if not demo: return callback('approve_domains' if action=='approve' else 'revoke_domain',payload=request)
+        if action in ('approve_request','reject_request') and (not isinstance(request,dict) or set(request) != {'id'}):
+            raise ValueError('id required')
+        if not demo:
+            operation = 'decide_domain_request' if action in ('approve_request','reject_request') else 'approve_domains' if action == 'approve' else 'revoke_domain'
+            data = dict(request, decision='approve' if action == 'approve_request' else 'reject') if action in ('approve_request','reject_request') else request
+            return callback(operation, payload=data)
+        if action in ('approve_request','reject_request'):
+            if not isinstance(request,dict) or set(request) != {'id'}: raise ValueError('id required')
+            item = demo_requests.get(request['id'])
+            if item['status'] != 'pending': raise ValueError('Request already decided')
+            if action == 'approve_request':
+                spec = demo_requests.validate_current(demo_config,item)
+                change_domains('approve',{k:spec[k] for k in ('node_id','domains','duration_seconds','purpose')})
+                demo_requests.decided(item,'approved',demo_grants[item['node_id']]['id'])
+            else: demo_requests.decided(item,'rejected')
+            return control_status()
         if action == 'approve':
             spec = domain_approvals.validate_request(demo_config,request)
             demo_deadline = None
@@ -434,7 +457,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 self.connection.settimeout(3)
                 data = json.loads(self.rfile.read(size))
                 if path == "/api/domain-approvals":
-                    if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke'):
+                    if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke','approve_request','reject_request'):
                         raise ValueError('action and request required')
                 elif path == "/api/nodes":
                     if not isinstance(data, dict) or set(data) != {"nodes", "revision"}: raise ValueError("nodes and revision required")
@@ -472,10 +495,8 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             path = urlsplit(self.path).path
             status = 200
             if path == '/api/domain-approvals':
-                try:
-                    self.send_payload(200,{'control':change_domains(data['action'],data['request']),'demo':demo})
-                except ValueError as exc: self.send_payload(400,{'error':str(exc)})
-                except Exception as exc: self.send_payload(503,{'error':'限定許可の結果を確認できません。状態を再確認してください。','detail':str(exc)[:300]})
+                try: self.send_payload(200, {'control':control_status(), 'demo':demo})
+                except Exception: self.send_payload(503, {'error':'制御状態を取得できません。'})
                 return
             if path == '/api/nodes':
                 try:
@@ -500,7 +521,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                     status, mime = 503, "application/json; charset=utf-8"
                     payload = json.dumps({"error": "収集データを読み込めません。collectorサービスを確認してください。",
                                           "detail": str(exc)[:200]}, ensure_ascii=False).encode()
-            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/world.json", "/style.css"}:
+            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/request-notifications.js", "/world.json", "/style.css"}:
                 filename = "index.html" if path == "/" else path[1:]
                 mime = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8",
                         "css": "text/css; charset=utf-8", "json": "application/json; charset=utf-8"}[filename.split(".")[-1]]
