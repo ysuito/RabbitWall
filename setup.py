@@ -50,10 +50,10 @@ def init(path, defaults=False):
 def assets(config):
     """Render a complete dedicated-router firewall; never merge arbitrary host rules."""
     c = validate(config)
-    from firewall import baseline, gate, dns_rule, probe_rules, request_rule, SYSCTL
+    from firewall import baseline, persistent_rules, SYSCTL
     from unbound_config import render
     firewall = baseline(c)
-    gate_rules = gate(c) + dns_rule(c) + probe_rules(c) + request_rule(c)
+    gate_rules = persistent_rules(c)
     sysctl = SYSCTL
     result = {'unbound.conf':render(c), 'rabbitwall.nft':gate_rules, 'nftables.conf':firewall, '90-rabbitwall-router.conf':sysctl,
               'rabbitwall-monitor.conf':'nf_conntrack\n',

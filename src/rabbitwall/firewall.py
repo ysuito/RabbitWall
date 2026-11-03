@@ -151,6 +151,11 @@ def gate(config):
 '''
 
 
+def persistent_rules(config):
+    """Complete boot snippet. Keep request ingress when rewriting node settings."""
+    return gate(config) + probe_rules(config) + dns_rule(config) + request_rule(config)
+
+
 def baseline(config):
     c = validate(config); ai = ipaddress.IPv4Interface(c['ai_cidr']); up = ipaddress.IPv4Interface(c['uplink_cidr'])
     result = f'''#!/usr/sbin/nft -f

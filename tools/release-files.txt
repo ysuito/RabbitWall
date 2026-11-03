@@ -91,3 +91,7 @@ tests/test_domain_requests.py
 
 src/rabbitwall/static/request-notifications.js
 tests/test_request_notifications.cjs
+
+src/rabbitwall/http_limits.py
+
+tests/test_http_limits.py

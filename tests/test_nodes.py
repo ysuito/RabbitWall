@@ -12,7 +12,7 @@ import control
 import console
 import node_config
 import settings
-from firewall import node_rule_batch
+from firewall import node_rule_batch, persistent_rules, REQUEST_COMMENT, request_rule
 import test_management
 
 
@@ -88,6 +88,19 @@ class NodeSettings(unittest.TestCase):
             result = control.probe_nodes(config=config)
         run.assert_not_called()
         self.assertTrue(all(node['state']=='disabled' for node in result[1:]))
+
+    def test_node_save_preserves_complete_boot_rules_including_request_ingress(self):
+        config=self.config()
+        nodes=node_config.document(config)['nodes'];nodes[-1]['label']='Edited AI'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);snippet=root/'rabbitwall.nft'
+            snippet.write_text(persistent_rules(config))
+            updated=node_config.save(config,self.payload(config,nodes),Mock(),lambda:[],root/'nodes.json',snippet)
+            saved=snippet.read_text()
+            self.assertEqual(saved,persistent_rules(updated))
+            self.assertEqual(saved.count(REQUEST_COMMENT),1)
+            self.assertIn(request_rule(updated),saved)
+            self.assertNotIn('add element inet rabbitwall_console online_sources',saved)
 
     def test_save_rolls_back_files_and_live_permissions_on_write_failure(self):
         config = self.config()

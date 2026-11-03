@@ -11,3 +11,9 @@ RabbitWall is for a dedicated Linux gateway on a trusted management network. It 
 - Installing replaces this dedicated host's nftables ruleset. UFW/firewalld/Docker, hardware flow offload, custom routing and other network managers are outside automatic integration. Use a local recovery console and review the generated plan.
 
 Please do not include certificates, private keys, passwords, actual traffic logs or device backups in public issues. If the repository owner has enabled GitHub private vulnerability reporting, use that channel. Otherwise contact the owner privately before publishing an exploit; no private reporting address is bundled with this source.
+
+HTTP ingress uses a total five-second header receive budget and a separate three-second body receive budget. Small periodic reads do not restart these deadlines. Each HTTP server accepts at most 32 active workers and eight per source IP; counters are released on completion or failure. Controller/DNS-policy application time is outside the receive budget. Responses have a separate five-second socket timeout.
+
+Mitigation of [dnspython CVE-2026-114605](https://github.com/rthalley/dnspython/security/advisories/GHSA-45c3-73f7-pv4m) is deferred while retaining OS-managed dependencies. RabbitWall keeps its existing dnspython >=2.6.1,<3 requirement and does not require pip, a separate Python environment, or the new compression-pointer startup probe. This deferral does not mean the CPU-exhaustion issue has been fixed; follow the distribution's security updates.
+
+Installation, controller installation and node saves use the same closed-by-default persistent firewall renderer, including downlink request ingress on TCP 8767. Node edits must not remove that rule on a subsequent firewall reload.

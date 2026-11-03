@@ -10,11 +10,13 @@ from pathlib import Path
 import re
 import secrets
 import signal
+import socket
 import sqlite3
 import subprocess
 import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from http_limits import DeadlineHandler
 import threading
 from urllib.parse import urlsplit
 from control import TOKEN, request_control, validate_duration
@@ -257,13 +259,18 @@ def demo_state():
 
 
 class ConsoleServer(ThreadingHTTPServer):
-    """Bound local HTTP worker count and idle socket lifetime."""
+    """Bound total and per-source workers; receive deadlines live in DeadlineHandler."""
     max_workers = 32
+    max_per_source = 8
+    header_timeout = 5
+    body_timeout = 3
     request_queue_size = 16
     daemon_threads = True
 
     def __init__(self, *args, **kwargs):
         self.slots = threading.BoundedSemaphore(self.max_workers)
+        self.source_lock = threading.Lock()
+        self.source_counts = {}
         super().__init__(*args, **kwargs)
 
     def get_request(self):
@@ -272,20 +279,34 @@ class ConsoleServer(ThreadingHTTPServer):
         return request, address
 
     def process_request(self, request, address):
-        if not self.slots.acquire(blocking=False):
+        source = address[0]
+        with self.source_lock:
+            accepted = self.source_counts.get(source, 0) < self.max_per_source and self.slots.acquire(blocking=False)
+            if accepted:
+                self.source_counts[source] = self.source_counts.get(source, 0) + 1
+        if not accepted:
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, address)
         except BaseException:
-            self.slots.release()
+            self.release_slot(source)
             raise
+
+    def release_slot(self, source):
+        with self.source_lock:
+            remaining = self.source_counts[source] - 1
+            if remaining:
+                self.source_counts[source] = remaining
+            else:
+                del self.source_counts[source]
+            self.slots.release()
 
     def process_request_thread(self, request, address):
         try:
             super().process_request_thread(request, address)
         finally:
-            self.slots.release()
+            self.release_slot(address[0])
 
 
 def make_handler(state_path, port, demo=False, control_callback=None, token_file=TOKEN, geoip_path=DEFAULT_DATABASE):
@@ -383,7 +404,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             del demo_grants[key]
         return control_status()
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(DeadlineHandler):
         server_version = "RabbitWall"
 
         def log_message(self, fmt, *args):
@@ -418,6 +439,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             return True
 
         def send_payload(self, status, payload, mime="application/json; charset=utf-8"):
+            self.connection.settimeout(5)
             if isinstance(payload, dict):
                 payload = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(status)
@@ -454,7 +476,6 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= (12288 if path in {"/api/nodes","/api/domain-approvals"} else 128) or self.headers.get_content_type() != "application/json":
                     raise ValueError("invalid body")
-                self.connection.settimeout(3)
                 data = json.loads(self.rfile.read(size))
                 if path == "/api/domain-approvals":
                     if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke','approve_request','reject_request'):
@@ -464,6 +485,9 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 elif not isinstance(data, dict) or set(data) not in ({"enabled"}, {"enabled", "duration_seconds"}) or type(data["enabled"]) is not bool:
                     raise ValueError("enabled must be boolean")
                 if path == "/api/internet": validate_duration(data["enabled"], data.get("duration_seconds"))
+            except (TimeoutError, socket.timeout):
+                self.send_payload(408, {"error":"リクエストの受信期限を超えました。"})
+                return
             except (ValueError, OSError):
                 self.send_payload(400, {"error": "入力形式またはリクエストサイズが正しくありません。"})
                 return

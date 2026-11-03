@@ -2,7 +2,8 @@
 """Downlink-only, unprivileged request ingress. No administrative operations."""
 import ipaddress
 import json
-from http.server import BaseHTTPRequestHandler
+import socket
+from http_limits import DeadlineHandler
 
 from console import ConsoleServer
 from control import request_control
@@ -14,13 +15,14 @@ def make_handler(config=SETTINGS, callback=None):
     address = str(ipaddress.IPv4Interface(config['ai_cidr']).ip)
     callback = callback or (lambda action, payload: request_control(action, path=REQUEST_SOCKET, payload=payload))
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(DeadlineHandler):
         server_version = 'RabbitWall-Requests'
 
         def log_message(self, *_):
             pass
 
         def reply(self, code, data):
+            self.connection.settimeout(5)
             body = json.dumps(data, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -47,7 +49,6 @@ def make_handler(config=SETTINGS, callback=None):
                     if (not 0 < size <= 12288 or self.headers.get_content_type() != 'application/json'
                             or self.headers.get('Transfer-Encoding')):
                         raise ValueError('Expected bounded JSON body')
-                    self.connection.settimeout(3)
                     payload = json.loads(self.rfile.read(size))
                     action = 'submit_domain_request'
                 else:
@@ -59,6 +60,7 @@ def make_handler(config=SETTINGS, callback=None):
                     action = 'domain_request_status'
                 result = callback(action, payload={'source':self.client_address[0], 'request':payload})
                 self.reply(201 if submit else 200, {'request':result})
+            except (TimeoutError, socket.timeout): self.reply(408, {'error':'HTTP receive deadline exceeded'})
             except RequestLimit as exc: self.reply(429, {'error':str(exc)})
             except ValueError as exc: self.reply(400, {'error':str(exc)})
             except Exception: self.reply(503, {'error':'Request service unavailable; do not assume approval'})

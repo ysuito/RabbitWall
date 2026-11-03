@@ -27,7 +27,7 @@ from domain_requests import Requests, PUBLIC_ACTIONS, REQUEST_SOCKET, RequestLim
 SOCKET = Path("/run/rabbitwall/control.sock")
 TOKEN = Path("/etc/rabbitwall/control.token")
 GROUP = "rabbitwall-control"
-from firewall import LEASE, PROBE_COMMENT, DNS_COMMENT, REQUEST_COMMENT, request_rule, gate, dns_rule, probe_rules
+from firewall import LEASE, PROBE_COMMENT, DNS_COMMENT, REQUEST_COMMENT, request_rule, persistent_rules, gate, dns_rule, probe_rules
 
 GATE_RULES = gate(SETTINGS)
 DNS_RULE = dns_rule(SETTINGS)
@@ -455,7 +455,7 @@ def install_persistent(config=Path("/etc/nftables.conf"), snippet=Path("/etc/nft
     candidate = original if include in original else original.rstrip() + "\n\n# RABBITWALL console: boot defaults to OFF\n" + include + "\n"
     snippet.parent.mkdir(parents=True, exist_ok=True)
     old_snippet = snippet.read_bytes() if snippet.exists() else None
-    snippet.write_text(GATE_RULES + "\n" + PROBE_RULE + DNS_RULE + request_rule(SETTINGS))
+    snippet.write_text(persistent_rules(SETTINGS))
     os.chmod(snippet, 0o644)
     fd, temporary = tempfile.mkstemp(prefix=".rabbitwall-nft-check-", dir=config.parent)
     try:
