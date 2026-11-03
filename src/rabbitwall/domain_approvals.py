@@ -6,12 +6,18 @@ import re
 import secrets
 import threading
 import time
+import audit
 
 from firewall import LEASE, domain_lease_rules
 from unbound_guard import DNSGuard
 
 DURATIONS = (60, 300, 1800)
 MAX_DOMAINS = 32
+
+
+def log_end(grant, reason):
+    audit.record({'event':'domain-ended', 'reason':reason,
+                  **{key:grant[key] for key in ('id','node_id','source','domains','purpose','duration_seconds','expires_at') if key in grant}})
 
 
 def parse_domains(values):
@@ -87,7 +93,9 @@ class Approvals:
         self.policy_dirty = True
 
     def clear(self, sync=False):
-        for grant in self.grants.values(): grant['cancel'].set()
+        for grant in self.grants.values():
+            grant['cancel'].set()
+            log_end(grant, 'cleared')
         self.grants.clear()
         for _, future in self.jobs.values(): future.cancel()
         # Running jobs retain at most one bounded query; their results are discarded.
@@ -108,7 +116,9 @@ class Approvals:
         planned = [g for key,g in self.grants.items() if key != spec['node_id'] and g['deadline']>now] + [grant]
         self.policy_dirty = True
         self.guard.apply(planned)
-        if previous: previous['cancel'].set()
+        if previous:
+            previous['cancel'].set()
+            log_end(previous, 'replaced')
         self.grants[spec['node_id']] = grant
         self.tick()
 
@@ -129,6 +139,7 @@ class Approvals:
             if grant['deadline'] <= now:
                 grant['cancel'].set()
                 del self.grants[key]
+                log_end(grant, 'expired')
 
     def tick(self):
         self.expire()
@@ -159,6 +170,6 @@ class Approvals:
                 record = grant['records'].get(name,{})
                 records.append({'domain':name, 'addresses':record.get('addresses',[]) if record.get('until',0)>now else [],
                                 'error':record.get('error'), 'resolving':not bool(record)})
-            result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','expires_at')} |
+            result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','duration_seconds','expires_at')} |
                           {'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
         return result

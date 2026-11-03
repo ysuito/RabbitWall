@@ -145,6 +145,13 @@ class HTTP(unittest.TestCase):
         self.assertIn(b"application/json",head)
         self.assertTrue(json.loads(body)["countries"]["JP"]["point"])
 
+    def test_request_notification_script_is_served_locally(self):
+        response = self.request('/request-notifications.js')
+        head, body = response.split(b'\r\n\r\n', 1)
+        self.assertIn(b'200 OK', head)
+        self.assertIn(b'text/javascript', head)
+        self.assertIn(b'RequestNotifications', body)
+
     def test_missing_collector_state_is_unavailable(self):
         self.assertIn(b"503", self.request("/api/state", demo=False))
 

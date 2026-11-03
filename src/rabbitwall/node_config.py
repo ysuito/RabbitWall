@@ -8,7 +8,7 @@ import tempfile
 import time
 
 from settings import validate, NODES_CONFIG
-from firewall import gate, dns_rule, probe_rules, node_rule_batch
+from firewall import persistent_rules, node_rule_batch
 
 SNIPPET = Path('/etc/nftables.d/rabbitwall.nft')
 
@@ -82,7 +82,7 @@ def save(config, payload, nft, objects, node_path=NODES_CONFIG, snippet_path=SNI
     nft(['-f','-'], batch)
     try:
         atomic_write(node_path, (json.dumps({'nodes':updated['nodes']}, ensure_ascii=False, indent=2)+'\n').encode())
-        atomic_write(snippet_path, (gate(updated)+probe_rules(updated)+dns_rule(updated)).encode())
+        atomic_write(snippet_path, persistent_rules(updated).encode())
     except Exception:
         # Even if restoring a file fails, still attempt to undo live permissions.
         failures = []

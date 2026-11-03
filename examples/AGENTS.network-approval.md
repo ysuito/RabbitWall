@@ -1,9 +1,23 @@
 # Network access policy
 
-- Internet access requires explicit human approval through RabbitWall.
-- Before a network operation, present the exact destination domains, purpose and requested duration (1, 5 or 30 minutes). Provide a separate plain list, one domain per line, suitable for pasting into RabbitWall.
-- Wait for the human to confirm approval before connecting. A request or an existing connection is not approval.
-- Include dependency registries, download hosts and API hosts you can identify from local project files. If a redirect or another missing host becomes necessary, stop and request an updated domain list; do not assume permission extends to subdomains.
-- Do not bypass a denial through literal IPs, alternate resolvers, proxies, VPNs, tunnels, changes to network settings or repeated retries.
-- Never obtain or use RabbitWall's management certificate, control token or administrator API. Only the human approves, extends or opens access.
-- Report completion so the human can revoke access early. If permission expires, request approval again.
+- External access requires explicit human approval in RabbitWall.
+- The request API is `http://10.1.0.1:8767`. The administrator must replace this with the gateway's actual downlink IPv4 address. Local API calls to submit requests, check their status and revoke your own grant are permitted.
+- Before external access, inspect local project configuration to identify the exact domains, purpose and requested duration (60, 300 or 1800 seconds). Send JSON to `POST /api/domain-requests`, for example `{"domains":["github.com","api.github.com"],"duration_seconds":1800,"purpose":"Download dependencies"}`. Set `Content-Type: application/json`, bypass proxies and connect directly. Do not supply a node ID or source address.
+- Normally request 1800 seconds (30 minutes), allowing time for local LLM inference, tool execution and result review. Choose 60 or 300 seconds when the task is clearly brief. The duration starts at administrator approval; revoke access as soon as the work finishes rather than waiting for expiry.
+- Save `request.id` from HTTP 201 and ask the administrator to review the domains, purpose and duration in the console. Submission and an existing connection do not imply approval.
+- Poll `GET /api/domain-requests/<request.id>` from the same host at intervals of at least five seconds. Wait while `request.status` is `pending`. Connect only after it is `approved` and the domain's `request.approval.records` entry contains public IPv4 `addresses`.
+- Stop external access on `rejected`, `ended`, errors or missing requests. Pending requests disappear after ten minutes. Do not submit duplicates while pending; wait at least ten seconds after HTTP 429. Do not automatically resubmit rejected requests; await administrator instructions. Continuing after expiry requires a new request and approval.
+- Subdomains and redirect destinations require individual approval. Stop and submit a new complete domain list when additional destinations are needed. Include domains still needed because approval replaces the previous grant for the node.
+- Do not bypass restrictions using direct IPs, another DNS server, proxies, VPNs, tunnels, network changes or repeated retries.
+- Never obtain or use RabbitWall management certificates, control tokens or administrator APIs. Approval, extension, full opening and revocation of other grants belong to the human administrator. Do not include secrets in the purpose.
+- When work requiring external access finishes, send an empty-body `POST /api/domain-requests/<request.id>/revoke` from the submitting source IP to revoke your own grant. Example: `curl --noproxy '*' --connect-timeout 5 --max-time 15 -X POST http://10.1.0.1:8767/api/domain-requests/REPLACE_WITH_REQUEST_ID/revoke`. Verify HTTP 200 and `request.status` of `ended`, then report completion and the revocation result. If revocation fails or is uncertain, stop external access and ask the administrator to revoke it. An ended or replaced grant is a no-op; a newer grant is never revoked.
+
+## Connection failures with Codex CLI inside Docker
+
+- Codex CLI's own sandbox can restrict network access even inside Docker. A request API `curl` timeout does not establish that RabbitWall's firewall is responsible. Successful ping alone does not establish HTTP connectivity either.
+- If sandbox network restrictions are suspected, request network permission specifically for the submission, status or self-revocation API `curl`, following the environment's approval policy. When supported by the execution tool and permitted by policy, set `sandbox_permissions: "require_escalated"` and a `justification` explaining the local API submission, status check or self-revocation, then execute outside the sandbox after approval. Codex execution permission is separate from RabbitWall traffic approval.
+- Keep execution outside the sandbox within the same Docker container and use the same source IP for submission, polling and self-revocation. Use `curl --noproxy '*' --connect-timeout 5 --max-time 15 ...` to bypass proxies. Neither `sudo` nor moving execution to the Docker host is required. If a submission POST has no known response, ask the administrator to check whether it was created rather than repeatedly submitting duplicates.
+- If permission requests are prohibited or denied, stop and report the situation to the administrator. Do not bypass restrictions by disabling the entire sandbox or changing Docker or network settings. If permitted execution still cannot connect, ask the administrator to check container routing, the RabbitWall request API service and the downlink firewall.
+- External access still requires RabbitWall approval and DNS records. If approved external access also needs Codex network permission, request it separately within the approved domains, purpose and duration.
+
+Reference: [Official OpenAI documentation: Codex approvals and network controls](https://learn.chatgpt.com/docs/agent-approvals-security)

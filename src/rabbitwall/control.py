@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed-purpose local controller; accepts only validated node settings, never nft commands from HTTP."""
 import argparse
+import audit
 import concurrent.futures
 import datetime as dt
 import grp
@@ -9,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -21,11 +23,12 @@ import time
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, monitored, NODES_CONFIG
 import node_config
 import domain_approvals
+from domain_requests import Requests, PUBLIC_ACTIONS, REQUEST_SOCKET, RequestLimit
 
 SOCKET = Path("/run/rabbitwall/control.sock")
 TOKEN = Path("/etc/rabbitwall/control.token")
 GROUP = "rabbitwall-control"
-from firewall import LEASE, PROBE_COMMENT, DNS_COMMENT, gate, dns_rule, probe_rules
+from firewall import LEASE, PROBE_COMMENT, DNS_COMMENT, REQUEST_COMMENT, request_rule, persistent_rules, gate, dns_rule, probe_rules
 
 GATE_RULES = gate(SETTINGS)
 DNS_RULE = dns_rule(SETTINGS)
@@ -53,13 +56,13 @@ def validate_duration(enabled, duration):
 
 
 def request_control(action, path=SOCKET, payload=None):
-    if action not in {"status", "enable", "disable", "nodes", "save_nodes", "approve_domains", "revoke_domain"}:
+    if action not in {"status", "audit_log", "enable", "disable", "nodes", "save_nodes", "approve_domains", "revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS}:
         raise ValueError("unsupported action")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(25 if action in {"save_nodes","approve_domains","revoke_domain"} else 4)
+        client.settimeout(25 if action in {"save_nodes","approve_domains","revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS} else 4)
         client.connect(str(path))
         request = {"action":action}
-        if action in {"save_nodes","approve_domains","revoke_domain"} or (action == "enable" and payload is not None): request["payload"] = payload
+        if action in {"save_nodes","approve_domains","revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS} or (action == "enable" and payload is not None): request["payload"] = payload
         client.sendall((json.dumps(request) + "\n").encode())
         chunks = bytearray()
         while b"\n" not in chunks:
@@ -67,10 +70,11 @@ def request_control(action, path=SOCKET, payload=None):
             if not part:
                 raise RuntimeError("controller closed connection")
             chunks.extend(part)
-            if len(chunks) > 1048576:
+            if len(chunks) > 4194304:
                 raise RuntimeError("controller response too large")
         data = json.loads(chunks.split(b"\n", 1)[0])
         if not data.get("ok"):
+            if data.get("limited"): raise RequestLimit(data.get("error", "Too many requests"))
             if data.get("conflict"): raise node_config.RevisionConflict(data.get("error", "Node settings changed"))
             if data.get("invalid"): raise ValueError(data.get("error", "Invalid node settings"))
             raise RuntimeError(data.get("error", "controller error"))
@@ -115,6 +119,8 @@ def install_runtime():
     script += node_config.node_rule_batch(SETTINGS, objects)
     if not any(item.get("rule", {}).get("comment") == DNS_COMMENT for item in objects):
         script += DNS_RULE
+    if not any(item.get("rule", {}).get("comment") == REQUEST_COMMENT for item in objects):
+        script += request_rule(SETTINGS)
     # Delete+create is one atomic nft transaction; no open interval in between.
     nft(["-f", "-"], script)
     return read_gate()["handle"]
@@ -171,10 +177,12 @@ class Controller:
         self.config = SETTINGS
         self.node_revision = node_config.revision(self.config)
         self.approvals = domain_approvals.Approvals(nft)
+        self.requests = Requests()
 
     def status(self):
         actual = read_gate()
         if actual["handle"] != self.handle:
+            audit.record({'event':'gate-ended','reason':'kernel-reload'})
             # nftables reload recreates an empty gate: never restore ON silently.
             self.desired = False
             self.approvals.clear()
@@ -182,6 +190,7 @@ class Controller:
             apply_enabled(False)
             actual = read_gate()
         if self.deadline is not None and time.monotonic() >= self.deadline:
+            audit.record({'event':'gate-ended','reason':'expired'})
             self.desired = False
             apply_enabled(False)
             actual = read_gate()
@@ -196,7 +205,7 @@ class Controller:
             apply_enabled(False)
             approvals = []
         restricted = bool(approvals) and actual.get('restricted',False)
-        return {"domain_approvals":approvals, "mode":"full" if actual["enabled"] else "restricted" if restricted else "closed",
+        return {"domain_requests":self.requests.snapshot(approvals), "domain_approvals":approvals, "mode":"full" if actual["enabled"] else "restricted" if restricted else "closed",
                 "remaining_seconds": remaining, "enabled": actual["enabled"] or restricted, "available": True, "checked_at": utc_now(),
                 "lease_seconds": LEASE, "nodes": self.nodes, "error": self.error}
 
@@ -254,20 +263,60 @@ class Controller:
             apply_enabled(False)
             raise
         self.error = None
-        print(json.dumps({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'domains':spec['domains'],
-                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']}),flush=True)
+        audit.record({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'source':spec['source'],'domains':spec['domains'],
+                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
+        return self.status()
+
+    def agent_request(self, action, payload):
+        if action not in PUBLIC_ACTIONS: raise ValueError('Invalid agent action')
+        if not isinstance(payload, dict) or set(payload) != {'source', 'request'}:
+            raise ValueError('source and request required')
+        source, data = payload['source'], payload['request']
+        if not isinstance(source, str): raise ValueError('Invalid source')
+        if action == 'submit_domain_request':
+            item = self.requests.submit(self.config, source, data)
+            audit.record({'event':'domain-request', 'at':utc_now(), **{k:v for k,v in item.items() if not k.startswith('_')}})
+        else:
+            if not isinstance(data, dict) or set(data) != {'id'}: raise ValueError('id required')
+            item = self.requests.get(data['id'])
+            if item['source'] != source: raise ValueError('Request not found')
+            if not any(n['id'] == item['node_id'] and n['ip'] == source and n['interface'] == self.config['ai_if'] for n in self.config['nodes']):
+                raise ValueError('Node registration changed')
+            if action == 'revoke_domain_request':
+                if item['status'] != 'approved': raise ValueError('Request is not approved')
+                grant = self.approvals.grants.get(item['node_id'])
+                # Never revoke a replacement grant, including one issued manually.
+                if grant and grant['id'] == item['grant_id']:
+                    self.revoke_domain({'id':item['grant_id']})
+        # Do not expose other nodes, requests or administrative state.
+        return self.requests.view(item, self.status()['domain_approvals'])
+
+    def decide_domain_request(self, payload):
+        if not isinstance(payload, dict) or set(payload) != {'id', 'decision'} or payload['decision'] not in ('approve', 'reject'):
+            raise ValueError('id and decision (approve/reject) required')
+        item = self.requests.get(payload['id'])
+        if item['status'] != 'pending': raise ValueError('Request already decided')
+        if payload['decision'] == 'approve':
+            spec = self.requests.validate_current(self.config, item)
+            self.approve_domains({k:spec[k] for k in ('node_id','domains','duration_seconds','purpose')})
+            self.requests.decided(item, 'approved', self.approvals.grants[item['node_id']]['id'])
+        else:
+            self.requests.decided(item, 'rejected')
+        audit.record({'event':'domain-request-decision', 'at':utc_now(), **payload, 'grant_id':item.get('grant_id')})
         return self.status()
 
     def revoke_domain(self, payload):
         if not isinstance(payload,dict) or set(payload)!={'id'}: raise ValueError('id required')
         if not any(g['id']==payload['id'] for g in self.approvals.grants.values()): raise ValueError('Approval no longer exists')
+        selected = next(g for g in self.approvals.grants.values() if g['id']==payload['id'])
+        detail = {key:selected[key] for key in ('node_id','source','domains','purpose','duration_seconds')}
         apply_enabled(False)
         try: self.approvals.revoke(payload['id'])
         except Exception:
             self.approvals.clear()
             apply_enabled(False)
             raise
-        print(json.dumps({'event':'domain-revoke','at':utc_now(),'id':payload['id']}),flush=True)
+        audit.record({'event':'domain-revoke','at':utc_now(),'id':payload['id'], **detail})
         return self.status()
 
     def tick(self):
@@ -291,6 +340,7 @@ class Controller:
             if self.approvals.grants or self.approvals.jobs: self.approvals.tick()
             self.error = None
         except (OSError, RuntimeError, ValueError, KeyError, StopIteration, subprocess.TimeoutExpired) as exc:
+            audit.record({'event':'controller-failure','error_type':type(exc).__name__})
             self.desired = False
             self.error = str(exc)[:500]
             self.approvals.clear()
@@ -300,10 +350,77 @@ class Controller:
                 pass  # Existing kernel lease expires even if control is unavailable.
 
 
+def make_control_handler(controller):
+    class Handler(socketserver.StreamRequestHandler):
+        def handle(self):
+            self.request.settimeout(1)
+            peer = {'channel':'agent' if getattr(self.server, 'request_only', False) else 'administrator'}
+            try:
+                pid, uid, gid = struct.unpack('3i', self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                peer.update(pid=pid, uid=uid, gid=gid)
+            except (AttributeError, OSError):
+                pass
+            token = audit.actor.set(peer)
+            action, payload = 'invalid', None
+            try:
+                raw = self.rfile.readline(16385)
+                if len(raw) > 16384 or not raw.endswith(b"\n"):
+                    raise ValueError("invalid control request")
+                data = json.loads(raw)
+                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") in {"save_nodes","approve_domains","revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS} or (data.get("action") == "enable" and "payload" in data) else {"action"}):
+                    raise ValueError("invalid control request")
+                known = {'status','audit_log','nodes','enable','disable','save_nodes','approve_domains','revoke_domain','decide_domain_request', *PUBLIC_ACTIONS}
+                if not isinstance(data['action'], str) or data['action'] not in known:
+                    raise ValueError('unsupported action')
+                action = data["action"]
+                payload = data.get('payload')
+                if getattr(self.server, 'request_only', False) and action not in PUBLIC_ACTIONS:
+                    raise ValueError('Request socket cannot perform administrative operations')
+                if action not in {'status','audit_log','nodes','domain_request_status'}:
+                    audit.operation(action, payload, 'started')
+                if action in PUBLIC_ACTIONS:
+                    status = controller.agent_request(action, data['payload'])
+                elif action == 'decide_domain_request':
+                    status = controller.decide_domain_request(data['payload'])
+                elif action == "status":
+                    status = controller.status()
+                elif action == 'audit_log':
+                    status = audit.recent(permissions_only=True)
+                elif action == "nodes":
+                    status = controller.node_settings()
+                elif action in {"approve_domains","revoke_domain"}:
+                    status = controller.approve_domains(data['payload']) if action == 'approve_domains' else controller.revoke_domain(data['payload'])
+                elif action == "save_nodes":
+                    status = controller.save_nodes(data["payload"])
+                    audit.record({"event":action,"count":len(status["nodes"])})
+                elif action in {"enable", "disable"}:
+                    status = controller.set_enabled(action == "enable", data.get("payload"))
+                    audit.record({"event": action,
+                                      "enabled": status["enabled"], "duration_seconds": data.get("payload")})
+                else:
+                    raise ValueError("unsupported action")
+                response = {"ok": True, "status": status}
+                if action not in {'status','audit_log','nodes','domain_request_status'}:
+                    audit.operation(action, payload, 'success')
+            except Exception as exc:
+                audit.operation(action, payload, 'failure', exc)
+                response = {"ok": False, "error": str(exc)[:500], "conflict":isinstance(exc, node_config.RevisionConflict), "invalid":isinstance(exc, ValueError), "limited":isinstance(exc, RequestLimit)}
+            try:
+                self.wfile.write((json.dumps(response) + "\n").encode())
+            except OSError:
+                pass
+            finally:
+                audit.actor.reset(token)
+
+    return Handler
+
+
 def run_controller():
+    audit.configure()
+    audit.record({'event':'controller-starting','reason':'volatile-grants-reset-on-start'})
     controller = Controller()
     controller.approvals.reset_runtime()
-    print(json.dumps({"event": "controller-start", "enabled": False, "at": utc_now()}), flush=True)
+    audit.record({"event": "controller-start", "enabled": False, "at": utc_now()})
     running = True
     def stop(*_):
         nonlocal running
@@ -311,48 +428,20 @@ def run_controller():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
-    class Handler(socketserver.StreamRequestHandler):
-        def handle(self):
-            self.request.settimeout(1)
-            try:
-                raw = self.rfile.readline(16385)
-                if len(raw) > 16384 or not raw.endswith(b"\n"):
-                    raise ValueError("invalid control request")
-                data = json.loads(raw)
-                if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") in {"save_nodes","approve_domains","revoke_domain"} or (data.get("action") == "enable" and "payload" in data) else {"action"}):
-                    raise ValueError("invalid control request")
-                action = data["action"]
-                if action == "status":
-                    status = controller.status()
-                elif action == "nodes":
-                    status = controller.node_settings()
-                elif action in {"approve_domains","revoke_domain"}:
-                    status = controller.approve_domains(data['payload']) if action == 'approve_domains' else controller.revoke_domain(data['payload'])
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({'event':action,'at':utc_now(),'pid':pid,'uid':uid,'gid':gid}),flush=True)
-                elif action == "save_nodes":
-                    status = controller.save_nodes(data["payload"])
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({"event":action,"at":utc_now(),"pid":pid,"uid":uid,"gid":gid,"count":len(status["nodes"])}), flush=True)
-                elif action in {"enable", "disable"}:
-                    status = controller.set_enabled(action == "enable", data.get("payload"))
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({"event": action, "at": utc_now(), "pid": pid, "uid": uid, "gid": gid,
-                                      "enabled": status["enabled"], "duration_seconds": data.get("payload")}), flush=True)
-                else:
-                    raise ValueError("unsupported action")
-                response = {"ok": True, "status": status}
-            except Exception as exc:
-                response = {"ok": False, "error": str(exc)[:500], "conflict":isinstance(exc, node_config.RevisionConflict), "invalid":isinstance(exc, ValueError)}
-            try:
-                self.wfile.write((json.dumps(response) + "\n").encode())
-            except OSError:
-                pass
+    Handler = make_control_handler(controller)
 
     SOCKET.parent.mkdir(parents=True, exist_ok=True)
     if SOCKET.exists():
         SOCKET.unlink()
-    with socketserver.UnixStreamServer(str(SOCKET), Handler) as server, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    request_path = Path(REQUEST_SOCKET)
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    os.chown(request_path.parent, 0, grp.getgrnam('rabbitwall-requests').gr_gid)
+    os.chmod(request_path.parent, 0o750)
+    request_path.unlink(missing_ok=True)
+    with socketserver.UnixStreamServer(str(SOCKET), Handler) as server, socketserver.UnixStreamServer(REQUEST_SOCKET, Handler) as ingress, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        ingress.request_only = True
+        os.chown(request_path, 0, grp.getgrnam('rabbitwall-requests').gr_gid)
+        os.chmod(request_path, 0o660)
         os.chmod(SOCKET, 0o660)
         server.timeout = 0.5
         last_tick, last_probe, future = 0.0, 0.0, None
@@ -373,12 +462,17 @@ def run_controller():
                     previous = controller.nodes
                     future = executor.submit(lambda c=config, r=revision, p=previous: (r, probe_nodes(p, c)))
                     last_probe = now
-                server.handle_request()
+                ready, _, _ = select.select([server, ingress], [], [], .5)
+                for selected in ready:
+                    selected.handle_request()
         finally:
+            audit.record({'event':'controller-stopping'})
             controller.desired = False
             controller.approvals.close()
             apply_enabled(False)
+            audit.record({'event':'controller-stop','enabled':False})
             SOCKET.unlink(missing_ok=True)
+            request_path.unlink(missing_ok=True)
 
 
 def install_persistent(config=Path("/etc/nftables.conf"), snippet=Path("/etc/nftables.d/rabbitwall.nft"), token=TOKEN):
@@ -395,7 +489,7 @@ def install_persistent(config=Path("/etc/nftables.conf"), snippet=Path("/etc/nft
     candidate = original if include in original else original.rstrip() + "\n\n# RABBITWALL console: boot defaults to OFF\n" + include + "\n"
     snippet.parent.mkdir(parents=True, exist_ok=True)
     old_snippet = snippet.read_bytes() if snippet.exists() else None
-    snippet.write_text(GATE_RULES + "\n" + PROBE_RULE + DNS_RULE)
+    snippet.write_text(persistent_rules(SETTINGS))
     os.chmod(snippet, 0o644)
     fd, temporary = tempfile.mkstemp(prefix=".rabbitwall-nft-check-", dir=config.parent)
     try:

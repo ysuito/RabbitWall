@@ -1,0 +1,70 @@
+"use strict";
+const assert = require("node:assert/strict");
+const {RequestNotifications, RequestSound, remainingGrantSeconds} = require("../src/rabbitwall/static/request-notifications.js");
+const tracker = new RequestNotifications();
+const a={id:"a",status:"pending"}, b={id:"b",status:"pending"};
+assert.deepEqual(tracker.update([a]).added,[a]);
+assert.equal(tracker.update([a]).added.length,0,"polling must not repeat a notification");
+assert.equal(tracker.update([]).added.length,0);
+assert.equal(tracker.update([a]).added.length,0,"reconnect must not repeat a notification");
+assert.deepEqual(tracker.update([a,b]).added,[b]);
+assert.deepEqual(tracker.update([{...a,status:"approved"},b]).pending,[b]);
+assert.equal(tracker.update([{...a,status:"ended"},{...b,status:"rejected"}]).pending.length,0);
+tracker.update([{id:"c",status:"approved"}]);
+assert.equal(tracker.update([{id:"c",status:"ended"}]).added.length,0);
+for(let n=0;n<1000;n++)tracker.update([{id:"request-"+n,status:"pending"},b]);
+assert.ok(tracker.seen.size<=512);
+assert.equal(tracker.update([b]).added.length,0,"retained pending requests must stay deduplicated");
+
+(async()=>{
+  const tones=[],gains=[];
+  const context={state:"suspended",currentTime:10,destination:{},
+    async resume(){this.state="running";},
+    createOscillator(){const tone={frequency:{},connect(){},start(time){this.startTime=time;},stop(time){this.stopTime=time;},disconnect(){}};tones.push(tone);return tone;},
+    createGain(){const gain={gain:{setValueAtTime(){},linearRampToValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},disconnect(){}};gains.push(gain);return gain;}
+  };
+  let allocated=0;
+  const sound=new RequestSound(()=>{allocated++;return context;});
+  sound.play();assert.equal(allocated,0,"disabled sound must not allocate audio resources");
+  await sound.enable();
+  assert.equal(sound.enabled,true);assert.equal(tones.length,2,"enable plays a confirmation chime");
+  assert.deepEqual(tones.map(t=>t.frequency.value),[660,880]);
+  assert.ok(tones[1].stopTime-tones[0].startTime<0.5);
+  sound.play();assert.equal(tones.length,4);
+  sound.disable();sound.play();assert.equal(tones.length,4,"off is silent");
+  await sound.enable();assert.equal(allocated,1,"reuse the existing audio context");
+  context.state="suspended";
+  assert.throws(()=>sound.play(),/suspended/,"surface browser suspension so the button can offer retry");
+  const blocked=new RequestSound(()=>({state:"suspended",resume:async()=>{}}));
+  await assert.rejects(()=>blocked.enable(),/suspended/);assert.equal(blocked.enabled,true,"blocked audio must retain the user preference");
+  const saved=new Map(), storage={getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)};
+  const remembered=new RequestSound(()=>context,()=>storage);
+  context.state="running";
+  await remembered.enable();
+  const reloaded=new RequestSound(()=>context,()=>storage);
+  assert.equal(reloaded.enabled,true,"reload restores the on preference");
+  const beforeRestore=tones.length;
+  await reloaded.restore();
+  assert.equal(reloaded.ready,true);
+  assert.equal(tones.length,beforeRestore,"restoring preferences does not play a confirmation tone");
+  reloaded.disable();
+  assert.equal(new RequestSound(()=>context,()=>storage).enabled,false,"off also survives reload");
+  const unavailableStorage=new RequestSound(()=>context,()=>{throw new Error("Storage denied");});
+  await unavailableStorage.enable();unavailableStorage.disable();
+  assert.equal(unavailableStorage.enabled,false,"storage restrictions must not break the toggle");
+  const blockedSaved=new RequestSound(()=>({state:"suspended",resume:async()=>{}}),()=>storage);
+  await assert.rejects(()=>blockedSaved.enable(),/suspended/);
+  assert.equal(new RequestSound(()=>context,()=>storage).enabled,true,"autoplay restrictions do not erase saved settings");
+  let resume;
+  const delayed=new RequestSound(()=>({...context,resume:()=>new Promise(resolve=>{resume=resolve;})}));
+  const enabling=delayed.enable();delayed.disable();
+  const beforeDisable=tones.length;resume();await enabling;
+  assert.equal(tones.length,beforeDisable,"disabling while resume is pending must remain silent");
+  assert.equal(remainingGrantSeconds(300,1000,1000),300);
+  assert.equal(remainingGrantSeconds(300,1000,6000),295,"countdown uses elapsed time between server polls");
+  assert.equal(remainingGrantSeconds(1,1000,1999),1);
+  assert.equal(remainingGrantSeconds(1,1000,2000),0);
+  assert.equal(remainingGrantSeconds(1,1000,9000),0,"expired timers never go negative");
+  assert.equal(remainingGrantSeconds(undefined,1000,2000),null);
+  console.log("Request notifications: new arrivals, polling/reconnect deduplication, bounded history, saved on/off preferences, reload restoration, autoplay restrictions, mute and grant countdown passed.");
+})().catch(error=>{console.error(error);process.exitCode=1;});

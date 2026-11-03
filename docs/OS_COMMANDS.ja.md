@@ -26,7 +26,7 @@ Webサービスはこれらのコマンドを直接実行しません。制御�
 | コマンド | 発行元・用途 |
 | --- | --- |
 | `systemctl is-active --quiet <service>` | `setup.py check`：NetworkManagerが稼働中か、競合するufw・firewalld・docker・標準unboundが稼働していないか確認 |
-| `ss -H -lntup 'sport = :<port>'` | `check`：53・443・8765番の待受競合を確認 |
+| `ss -H -lntup 'sport = :<port>'` | `check`：53・443・8765・8767番の待受競合を確認 |
 | `ip -j -4 addr` | 再適用後など、指定IPv4が有効か確認 |
 | `unbound -V` | Unboundのdnstap対応ビルドを確認 |
 | `unbound-checkconf <一時設定ファイル>` | 生成したUnbound設定の構文を確認 |

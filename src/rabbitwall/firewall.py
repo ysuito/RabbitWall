@@ -5,6 +5,7 @@ from settings import validate, monitored, management_allowed
 LEASE = 20
 PROBE_COMMENT = 'rabbitwall-health-probe'
 DNS_COMMENT = 'rabbitwall-local-dns'
+REQUEST_COMMENT = 'rabbitwall-domain-requests'
 BLOCKED = ('0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
            '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.168.0.0/16',
            '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4')
@@ -30,6 +31,13 @@ def dns_rule(config):
     return (f'insert rule inet rabbitwall_filter input iifname "{c["ai_if"]}" '
             f'ip saddr {ai.network} ip daddr {ai.ip} meta l4proto {{ tcp, udp }} th dport 53 '
             f'counter accept comment "{DNS_COMMENT}"\n')
+
+
+def request_rule(config):
+    c = validate(config); ai = ipaddress.IPv4Interface(c['ai_cidr'])
+    return (f'insert rule inet rabbitwall_filter input iifname "{c["ai_if"]}" '
+            f'ip saddr {ai.network} ip daddr {ai.ip} tcp dport 8767 '
+            f'limit rate 10/second burst 20 packets counter accept comment "{REQUEST_COMMENT}"\n')
 
 
 NODE_ACCESS_COMMENT = 'rabbitwall-node-access'
@@ -141,6 +149,11 @@ def gate(config):
     }}
 }}
 '''
+
+
+def persistent_rules(config):
+    """Complete boot snippet. Keep request ingress when rewriting node settings."""
+    return gate(config) + probe_rules(config) + dns_rule(config) + request_rule(config)
 
 
 def baseline(config):

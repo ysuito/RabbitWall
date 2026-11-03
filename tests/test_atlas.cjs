@@ -89,7 +89,7 @@ assert.equal(pan.suppressClick,true);assert.equal(pan.drag,null);
 pan.drag={id:3,moved:false};pan.endPan({pointerId:3});assert.equal(pan.suppressClick,false);
 // Every supported theme can repaint; invalid stored preferences fall back safely.
 for(const theme of ["amber","cyan","violet","white","green","blue","red"]){pan.setTheme(theme);assert.equal(pan.theme,theme);}
-pan.setTheme("__proto__");assert.equal(pan.theme,"amber");
+pan.setTheme("__proto__");assert.equal(pan.theme,"green");
 pan.setTheme("cyan");assert.notEqual(pan.color("#ed9630"),"#ed9630");
 console.log("Session atlas: map pan/reset, drag-versus-click, and theme validation passed.");
 

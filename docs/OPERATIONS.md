@@ -69,6 +69,23 @@ The rejection view combines kernel journal logs and dropped-DNS observations, sh
 
 UDP DNS entries show actual query names and record types, rather than inferred domains. Both closed-gate UDP DNS and direct external UDP port-53 DNS are observed; search accepts query names and types. The existing collector receives packet copies via the OS libnetfilter_log library and NFLOG group 100. Observation failure cannot change or delay packet verdicts. Each DNS rule logs at most 5 packets/second with a burst of 10 and copies at most 4096 bytes. Up to 200 parsed observations are held in memory for five minutes and included in state JSON; raw packets and a separate DNS-rejection database are not written. Collector restart clears these observations. TCP DNS remains blocked according to the firewall policy, but its content is not observed: new connections are dropped at SYN before a DNS query is sent. Fragmented IP packets, malformed/truncated messages and encrypted DNS cannot reliably be decoded.
 
+## Audit trail
+
+Open **録 / 監査ログ** in the console over certificate-authenticated HTTPS. The view shows only requests, approval/rejection, revocation, grant endings, gate changes and failures of these operations. Startup/shutdown, node saves and duplicate operation started/success records remain in the files only. The view reads up to 200 recent matching entries within a 1 MiB budget across the current file and rotations, newest first. Search IPs, domains, purpose and IDs within that fetched range, filter by event or failures, and expand raw JSON details. It refreshes every ten seconds while visible. Inspect the files for older records.
+
+The controller appends JSON Lines to `/var/log/rabbitwall/audit.jsonl` for submissions, approval/rejection, administrator/agent revocation, grant replacement/expiry/clearing, gate changes, node saves and controller startup/shutdown. Control-socket operations record started/success/failure outcomes; successful polling is omitted. HTTP requests rejected before reaching the controller and individual traffic packets are outside this trail.
+
+Events include UTC time, request/grant IDs, source IP, domains, purpose and duration where applicable. Decision events link request `id` to `grant_id`. `actor.channel` distinguishes `agent` from `administrator`; PID/UID/GID identify the Unix-socket client service, not the individual administrator or certificate. Failure records include action, outcome and error type without unvalidated bodies or credentials. Never put secrets in a request purpose.
+
+```sh
+sudo tail -n 50 /var/log/rabbitwall/audit.jsonl
+sudo journalctl -u rabbitwall-control --since '1 hour ago' --no-pager -o cat
+```
+
+This uses only the standard library. Installation/update supplies the control service's log directory: mode 0700, files 0600, accessible only by root. Each append is synced. Files rotate at approximately 5 MiB with ten backups (`.1` newest) plus the current file, approximately 55 MiB total. Retention is capacity-based, with no guaranteed number of days. Restart/update preserves files; older journal entries are not imported.
+
+The same JSON is written to the service journal. Runtime file-write failures emit `audit-write-failed` to the journal while traffic control and revocation continue. Failure to create the audit file initially prevents controller startup. Journal persistence depends on OS configuration. Arrange external archival for long-term retention; this local trail does not resist modification or deletion by root.
+
 ## IP-country database
 
 Run this on the RabbitWall machine:

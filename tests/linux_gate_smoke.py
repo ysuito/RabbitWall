@@ -104,7 +104,7 @@ def main():
         client('ai','10.1.0.1',53,expected=False)
         assert all(entry['proto']=='UDP' for entry in observer.snapshot()[0])
         print('PASS: closed DNS stays blocked and NFLOG captures UDP questions only; TCP stays blocked',flush=True)
-        for namespace, ports, udp in [("upstream", "443,53", "53"), ("ai", "22,443", "none"), (None, "22,53", "53")]:
+        for namespace, ports, udp in [("upstream", "443,53", "53"), ("ai", "22,443", "none"), (None, "22,53,8767", "53")]:
             prefix = ["ip", "netns", "exec", namespace] if namespace else []
             child = subprocess.Popen(prefix + [sys.executable, "-u", "-c", SERVER, ports, udp, "10.0.0.254" if namespace == "upstream" else "10.1.0.1"], stdout=subprocess.PIPE, text=True)
             children.append(child)
@@ -215,6 +215,15 @@ for line in sys.stdin:
             save_nodes(edited,original['nodes'])
             persisted=(root/'rabbitwall.nft').read_text()
         print('PASS: live multi-node edits preserve ON/DNS, independently grant SSH/Ping, revoke established SSH and disable probes',flush=True)
+        # Reload exactly the node-save snippet, with no controller restart to
+        # repair a missing ingress rule. The internet gate must stay closed.
+        control.nft(['-f','-'],baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"',persisted))
+        assert not controller.status()['enabled']
+        client('ai','10.1.0.1',8767)
+        client('upstream','10.1.0.1',8767,source='10.0.0.9',expected=False)
+        client('ai','1.1.1.1',443,expected=False)
+        print('PASS: node-save firewall reload preserves downlink-only request ingress while egress is closed',flush=True)
+        controller.set_enabled(True)
         held_code = '''import socket,sys
 s=socket.create_connection(("1.1.1.1",443),timeout=0.7)
 print("ready",flush=True)
@@ -300,6 +309,7 @@ except OSError: print("blocked",flush=True)
         client('upstream','10.1.0.10',22,source='10.0.0.9')
         print("PASS: kernel lease expiry and controller/table restart default OFF", flush=True)
         # Exercise the actual root controller socket and durable node storage.
+        run(['groupadd','--system','rabbitwall-requests'])
         Path('/etc/rabbitwall').mkdir(exist_ok=True)
         Path('/etc/rabbitwall-nodes').mkdir(mode=0o755,exist_ok=True)
         Path('/etc/nftables.d').mkdir(exist_ok=True)

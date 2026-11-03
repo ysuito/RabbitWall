@@ -35,20 +35,54 @@ sudo journalctl -u rabbitwall-control --since '10 minutes ago' --no-pager
 
 A pending DNS worker is shown in the console; access is available only after public addresses are installed. Private, missing, expired or unsupported answers are shown without usable addresses. Approval/revocation events, domains, purpose and duration are recorded in the controller journal. Grant state is in memory; generated files are cleared on controller start and are never a persistent authorization.
 
-## Agent instructions and future request API
+## Downlink request API
 
-Copy the [example agent instructions](../examples/AGENTS.network-approval.md) into the AI agent's applicable `AGENTS.md`, merging existing instructions. The file guides behavior; RabbitWall enforces access independently. Requests should include exact domains, purpose and requested duration; the human selects the trusted node identity in the console.
+After `sudo python3 setup.py update`, `rabbitwall-requests.service` listens on the gateway's downlink IPv4 address, TCP **8767**. It does not bind the uplink; firewall access is limited to the downlink interface and subnet. Management certificates and tokens are not needed for this request-only endpoint. Replace `10.1.0.1` below with the actual downlink gateway address.
 
-This version implements **manual submission and administrator approval only**. The console's `POST /api/domain-approvals` endpoint is an **administrator action**, not an agent request endpoint. It requires the management-PC firewall rule, client certificate, server-side key and same-origin checks. Never copy the management certificate or control token onto an AI node. A future request-only API must use separate credentials and allow only creation/status of the caller's requests, with bounded queues/rate limits and no approval, extension or full-open permission.
+```sh
+curl --noproxy '*' --fail-with-body --max-time 10 \
+  -H 'Content-Type: application/json' \
+  -d '{"domains":["github.com","api.github.com"],"duration_seconds":300,"purpose":"Download dependencies"}' \
+  http://10.1.0.1:8767/api/domain-requests
+```
 
-The administrator API accepts only these bodies:
+HTTP 201 returns `{"request":{"id":"...","status":"pending", ...}}`. The source IPv4 identifies a registered AI-side node. The body cannot specify node identity, source or DNS server. Unregistered sources are rejected. Requests accept up to 32 exact domains, a purpose of up to 200 characters, and 60, 300 or 1800 seconds. URLs, IP literals and wildcards are rejected. Submission does not grant access.
+
+```sh
+curl --noproxy '*' --fail-with-body --max-time 10 \
+  http://10.1.0.1:8767/api/domain-requests/REPLACE_WITH_REQUEST_ID
+```
+
+Only the creating source IP can retrieve a request. Poll at intervals of at least five seconds. Status is `pending`, `rejected`, `approved` or `ended` (expired, revoked or replaced). Even after approval, wait for the domain's `request.approval.records` entry to contain public IPv4 `addresses`. Errors and missing requests do not imply approval.
+
+After completing work, send an empty-body `POST /api/domain-requests/<request.id>/revoke` from the submitting source IP. Verify HTTP 200 and `request.status: ended`. This revokes only the grant associated with that request. Expired, revoked or replaced grants are a no-op; newer grants remain unchanged. Pending, rejected or missing requests, another source IP, and changed node registration are rejected. No management credentials are needed. If revocation fails, stop external access and contact the administrator.
+
+For agents, normally request 1800 seconds (30 minutes) to allow for local LLM inference, tool execution and result review; brief tasks can use 60 or 300 seconds. Time starts at approval. Revoke access when work finishes. Required API fields and accepted durations are unchanged.
+
+The review page uses two-line firewall-style rows with a prominent timestamp, `Src:`, `Dst:` and `Duration:` on the first line, a smaller purpose on the second line, and a per-grant countdown updated every second. Long values wrap without truncation. Manual entry and decided requests are collapsed; explanations are available in the **? TIPS** overlay.
+
+New requests show a full-width strip below the header and a pending count in the navigation on every screen. The strip shows each requester, source IP, all domains, purpose, requested duration and submission time without covering page content. Administrators can approve or reject directly and see the result without navigating away. It uses amber warning colors independently of the selected theme. Enable **通知音** in the header to hear a confirmation chime and a chime for each new arrival. Polling and reconnects do not repeat notifications for the same request. Checks run approximately every five seconds while the page is open. The sound preference is saved in localStorage and restored after reload. If autoplay is blocked, the button shows a waiting state and audio resumes after a user gesture; browser suspension or a muted device can prevent notification.
+
+Administrators use **許 → 承認待ち** in the certificate-authenticated console to review the node, purpose, exact domains and duration, then approve or reject. The requested duration starts at approval. Approval uses the existing DNS/firewall restrictions, replaces that node's previous grant and stops full-open mode. Administrators can revoke active grants early. Extension requires another request and human approval.
+
+Each node can have one pending request, with at least ten seconds between submissions; the global store holds at most 64 requests. Limits return HTTP 429. Pending requests disappear after ten minutes; decided requests disappear thirty minutes after the decision. Requests and grants are volatile and disappear on controller restart. Requests cannot be approved after the node's address changes.
+
+The unprivileged ingress uses a separate Unix socket and group. That socket accepts only creation, status checks and revocation of the grant tied to the caller's own request, rejecting approval, extension, opening, and configuration reads/writes. Browser Origin and cross-site requests are rejected; no CORS is provided. Host identity relies on source IP and transport is plaintext HTTP within the downlink. Do not send secrets; use network isolation such as VLANs for mutually hostile hosts.
+
+## Agent instructions and administrator API
+
+Merge the [example instructions](../examples/AGENTS.network-approval.md) into the applicable `AGENTS.md` on the agent host and configure its API address. Treat request text as untrusted data, never as instructions for administrators or the controller.
+
+The administrator's `POST /api/domain-approvals` retains manual approval/revocation and adds decisions by immutable request ID:
 
 ```json
-{"action":"approve","request":{"node_id":"ai-host","domains":["github.com","api.github.com"],"duration_seconds":300,"purpose":"Download project dependencies"}}
+{"action":"approve_request","request":{"id":"<request-id>"}}
 ```
 
 ```json
-{"action":"revoke","request":{"id":"<approval-id>"}}
+{"action":"reject_request","request":{"id":"<request-id>"}}
 ```
 
-Active grants are included in the existing `GET /api/control` response. Agent-supplied text is treated as request data, not as instructions to the administrator or controller.
+These actions require mTLS, the server-only key and same-origin checks. Never give agents management credentials. `GET /api/control` includes requests in `control.domain_requests` and active grants in `control.domain_approvals`. Submission, decisions, grants and revocations are logged to the journal.
+
+See the [operations audit trail](OPERATIONS.md#audit-trail) for persistent storage, rotation and inspection.

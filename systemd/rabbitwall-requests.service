@@ -1,0 +1,28 @@
+[Unit]
+Description=RABBITWALL downlink domain request API
+Requires=rabbitwall-control.service
+After=rabbitwall-control.service network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/rabbitwall/request_api.py
+DynamicUser=yes
+# Keep the dynamic identity distinct from the installed socket-access group.
+User=rabbitwall-request-api
+SupplementaryGroups=rabbitwall-requests
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

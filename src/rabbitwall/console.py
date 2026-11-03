@@ -10,11 +10,13 @@ from pathlib import Path
 import re
 import secrets
 import signal
+import socket
 import sqlite3
 import subprocess
 import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
+from http_limits import DeadlineHandler
 import threading
 from urllib.parse import urlsplit
 from control import TOKEN, request_control, validate_duration
@@ -24,6 +26,7 @@ from traffic_analytics import collect_analytics
 from settings import SETTINGS, AI_INTERFACE, AI_IP, UPLINK_IP, metadata, load
 import node_config
 import domain_approvals
+from domain_requests import Requests
 
 AI = AI_INTERFACE.network
 LAN = ipaddress.ip_network(SETTINGS["management_cidr"])
@@ -256,13 +259,18 @@ def demo_state():
 
 
 class ConsoleServer(ThreadingHTTPServer):
-    """Bound local HTTP worker count and idle socket lifetime."""
+    """Bound total and per-source workers; receive deadlines live in DeadlineHandler."""
     max_workers = 32
+    max_per_source = 8
+    header_timeout = 5
+    body_timeout = 3
     request_queue_size = 16
     daemon_threads = True
 
     def __init__(self, *args, **kwargs):
         self.slots = threading.BoundedSemaphore(self.max_workers)
+        self.source_lock = threading.Lock()
+        self.source_counts = {}
         super().__init__(*args, **kwargs)
 
     def get_request(self):
@@ -271,20 +279,34 @@ class ConsoleServer(ThreadingHTTPServer):
         return request, address
 
     def process_request(self, request, address):
-        if not self.slots.acquire(blocking=False):
+        source = address[0]
+        with self.source_lock:
+            accepted = self.source_counts.get(source, 0) < self.max_per_source and self.slots.acquire(blocking=False)
+            if accepted:
+                self.source_counts[source] = self.source_counts.get(source, 0) + 1
+        if not accepted:
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, address)
         except BaseException:
-            self.slots.release()
+            self.release_slot(source)
             raise
+
+    def release_slot(self, source):
+        with self.source_lock:
+            remaining = self.source_counts[source] - 1
+            if remaining:
+                self.source_counts[source] = remaining
+            else:
+                del self.source_counts[source]
+            self.slots.release()
 
     def process_request_thread(self, request, address):
         try:
             super().process_request_thread(request, address)
         finally:
-            self.slots.release()
+            self.release_slot(address[0])
 
 
 def make_handler(state_path, port, demo=False, control_callback=None, token_file=TOKEN, geoip_path=DEFAULT_DATABASE):
@@ -298,6 +320,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
     demo_deadline = None
     demo_grants = {}
+    demo_requests = Requests()
 
     def control_status(action="status", duration_seconds=None):
         nonlocal demo_deadline
@@ -317,6 +340,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 demo_control['mode'] = 'restricted' if demo_grants else 'closed'
             demo_control['enabled'] = demo_control['mode'] != 'closed'
             demo_control['domain_approvals'] = [dict({k:v for k,v in g.items() if k!='_deadline'},remaining_seconds=max(0,g['_deadline']-time.monotonic())) for g in demo_grants.values()]
+            demo_control["domain_requests"] = demo_requests.snapshot(demo_control["domain_approvals"])
             demo_control["remaining_seconds"] = max(0, demo_deadline-time.monotonic()) if demo_deadline is not None else None
             demo_control["checked_at"] = utc_now()
             for node in demo_control["nodes"]:
@@ -325,8 +349,14 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             return dict(demo_control)
         return callback(action) if duration_seconds is None else callback(action, payload=duration_seconds)
 
+    demo_audit_time = utc_now()
     demo_config = json.loads(json.dumps(SETTINGS))
     demo_lock = threading.Lock()
+    if demo:
+        node = next((n for n in demo_config['nodes'] if n['interface'] == demo_config['ai_if']), None)
+        if node:
+            demo_requests.submit(demo_config, node['ip'], {'domains':['example.com'], 'duration_seconds':300,
+                                 'purpose':'試験表示：依存パッケージの取得（実通信なし）'})
 
     def nodes_status(payload=None):
         nonlocal demo_config
@@ -344,7 +374,22 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
 
     def change_domains(action, request):
         nonlocal demo_deadline
-        if not demo: return callback('approve_domains' if action=='approve' else 'revoke_domain',payload=request)
+        if action in ('approve_request','reject_request') and (not isinstance(request,dict) or set(request) != {'id'}):
+            raise ValueError('id required')
+        if not demo:
+            operation = 'decide_domain_request' if action in ('approve_request','reject_request') else 'approve_domains' if action == 'approve' else 'revoke_domain'
+            data = dict(request, decision='approve' if action == 'approve_request' else 'reject') if action in ('approve_request','reject_request') else request
+            return callback(operation, payload=data)
+        if action in ('approve_request','reject_request'):
+            if not isinstance(request,dict) or set(request) != {'id'}: raise ValueError('id required')
+            item = demo_requests.get(request['id'])
+            if item['status'] != 'pending': raise ValueError('Request already decided')
+            if action == 'approve_request':
+                spec = demo_requests.validate_current(demo_config,item)
+                change_domains('approve',{k:spec[k] for k in ('node_id','domains','duration_seconds','purpose')})
+                demo_requests.decided(item,'approved',demo_grants[item['node_id']]['id'])
+            else: demo_requests.decided(item,'rejected')
+            return control_status()
         if action == 'approve':
             spec = domain_approvals.validate_request(demo_config,request)
             demo_deadline = None
@@ -360,7 +405,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             del demo_grants[key]
         return control_status()
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(DeadlineHandler):
         server_version = "RabbitWall"
 
         def log_message(self, fmt, *args):
@@ -395,6 +440,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             return True
 
         def send_payload(self, status, payload, mime="application/json; charset=utf-8"):
+            self.connection.settimeout(5)
             if isinstance(payload, dict):
                 payload = json.dumps(payload, ensure_ascii=False).encode()
             self.send_response(status)
@@ -431,16 +477,18 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 size = int(self.headers.get("Content-Length", "0"))
                 if not 0 < size <= (12288 if path in {"/api/nodes","/api/domain-approvals"} else 128) or self.headers.get_content_type() != "application/json":
                     raise ValueError("invalid body")
-                self.connection.settimeout(3)
                 data = json.loads(self.rfile.read(size))
                 if path == "/api/domain-approvals":
-                    if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke'):
+                    if not isinstance(data,dict) or set(data)!={'action','request'} or data['action'] not in ('approve','revoke','approve_request','reject_request'):
                         raise ValueError('action and request required')
                 elif path == "/api/nodes":
                     if not isinstance(data, dict) or set(data) != {"nodes", "revision"}: raise ValueError("nodes and revision required")
                 elif not isinstance(data, dict) or set(data) not in ({"enabled"}, {"enabled", "duration_seconds"}) or type(data["enabled"]) is not bool:
                     raise ValueError("enabled must be boolean")
                 if path == "/api/internet": validate_duration(data["enabled"], data.get("duration_seconds"))
+            except (TimeoutError, socket.timeout):
+                self.send_payload(408, {"error":"リクエストの受信期限を超えました。"})
+                return
             except (ValueError, OSError):
                 self.send_payload(400, {"error": "入力形式またはリクエストサイズが正しくありません。"})
                 return
@@ -471,11 +519,23 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 return
             path = urlsplit(self.path).path
             status = 200
-            if path == '/api/domain-approvals':
+            if path == '/api/audit':
+                if not self.access_status()['can_control']:
+                    self.send_payload(403, {'error':'監査ログは証明書付きHTTPSで接続して確認してください。'})
+                    return
                 try:
-                    self.send_payload(200,{'control':change_domains(data['action'],data['request']),'demo':demo})
-                except ValueError as exc: self.send_payload(400,{'error':str(exc)})
-                except Exception as exc: self.send_payload(503,{'error':'限定許可の結果を確認できません。状態を再確認してください。','detail':str(exc)[:300]})
+                    result = {'entries':[
+                        {'at':demo_audit_time,'event':'domain-revoke','id':'b'*16,'node_id':'ai-host','source':next((n['ip'] for n in demo_config['nodes'] if n['interface']==demo_config['ai_if']), AI_IP),'domains':['example.com'],'purpose':'依存パッケージの取得完了','duration_seconds':1800,'actor':{'channel':'agent'}},
+                        {'at':demo_audit_time,'event':'domain-request-decision','id':'a'*32,'grant_id':'b'*16,'decision':'approve','actor':{'channel':'administrator'}},
+                        {'at':demo_audit_time,'event':'domain-request','id':'a'*32,'source':next((n['ip'] for n in demo_config['nodes'] if n['interface']==demo_config['ai_if']), AI_IP),'domains':['example.com'],'purpose':'依存パッケージの取得','duration_seconds':1800,'actor':{'channel':'agent'}}
+                    ], 'available':True, 'limited':False} if demo else callback('audit_log')
+                    self.send_payload(200, {'audit':result,'demo':demo})
+                except Exception:
+                    self.send_payload(503, {'error':'監査ログを取得できません。controlサービスとログ保存先を確認してください。'})
+                return
+            if path == '/api/domain-approvals':
+                try: self.send_payload(200, {'control':control_status(), 'demo':demo})
+                except Exception: self.send_payload(503, {'error':'制御状態を取得できません。'})
                 return
             if path == '/api/nodes':
                 try:
@@ -500,7 +560,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                     status, mime = 503, "application/json; charset=utf-8"
                     payload = json.dumps({"error": "収集データを読み込めません。collectorサービスを確認してください。",
                                           "detail": str(exc)[:200]}, ensure_ascii=False).encode()
-            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/world.json", "/style.css"}:
+            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/request-notifications.js", "/audit-view.js", "/world.json", "/style.css"}:
                 filename = "index.html" if path == "/" else path[1:]
                 mime = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8",
                         "css": "text/css; charset=utf-8", "json": "application/json; charset=utf-8"}[filename.split(".")[-1]]
