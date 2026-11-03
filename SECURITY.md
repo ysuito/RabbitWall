@@ -1,5 +1,7 @@
 # Security
 
+Residual concerns and decisions: [日本語](docs/SECURITY_REMAINING.ja.md).
+
 RabbitWall is for a dedicated Linux gateway on a trusted management network. It is not an Internet-facing service or a general-purpose firewall manager.
 
 - The backend listens on loopback. Caddy requires a trusted, explicitly permitted client certificate and the configured management-PC source IP.

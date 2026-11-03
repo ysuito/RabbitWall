@@ -95,3 +95,5 @@ tests/test_request_notifications.cjs
 src/rabbitwall/http_limits.py
 
 tests/test_http_limits.py
+
+docs/SECURITY_REMAINING.ja.md
