@@ -265,6 +265,7 @@ class Controller:
         return self.status()
 
     def agent_request(self, action, payload):
+        if action not in PUBLIC_ACTIONS: raise ValueError('Invalid agent action')
         if not isinstance(payload, dict) or set(payload) != {'source', 'request'}:
             raise ValueError('source and request required')
         source, data = payload['source'], payload['request']
@@ -278,6 +279,12 @@ class Controller:
             if item['source'] != source: raise ValueError('Request not found')
             if not any(n['id'] == item['node_id'] and n['ip'] == source and n['interface'] == self.config['ai_if'] for n in self.config['nodes']):
                 raise ValueError('Node registration changed')
+            if action == 'revoke_domain_request':
+                if item['status'] != 'approved': raise ValueError('Request is not approved')
+                grant = self.approvals.grants.get(item['node_id'])
+                # Never revoke a replacement grant, including one issued manually.
+                if grant and grant['id'] == item['grant_id']:
+                    self.revoke_domain({'id':item['grant_id']})
         # Do not expose other nodes, requests or administrative state.
         return self.requests.view(item, self.status()['domain_approvals'])
 

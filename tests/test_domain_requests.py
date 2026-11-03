@@ -112,6 +112,18 @@ class Requests(unittest.TestCase):
             self.assertNotIn('add element',instance.approvals.nft.call_args[0][1])
             status=instance.agent_request('domain_request_status',{'source':'10.1.0.10','request':{'id':item['id']}})
             self.assertEqual(status['status'],'ended')
+            now.return_value=300
+            item=instance.agent_request('submit_domain_request',{'source':'10.1.0.10','request':payload()})
+            instance.decide_domain_request({'id':item['id'],'decision':'approve'})
+            grant=instance.approvals.grants['ai-host']
+            args={'source':'10.1.0.10','request':{'id':item['id']}}
+            status=instance.agent_request('revoke_domain_request',args)
+            self.assertEqual(status['status'],'ended')
+            self.assertTrue(grant['cancel'].is_set())
+            self.assertEqual(instance.approvals.grants,{})
+            instance.approvals.guard.apply.assert_called_with([])
+            self.assertNotIn('add element',instance.approvals.nft.call_args[0][1])
+            self.assertEqual(instance.agent_request('revoke_domain_request',args)['status'],'ended')
 
     def test_rejection_failure_and_node_change_never_approve(self):
         instance=self.controller()
@@ -127,6 +139,30 @@ class Requests(unittest.TestCase):
             instance.config=SETTINGS;approve.side_effect=RuntimeError('Firewall failed')
             with self.assertRaises(RuntimeError): instance.decide_domain_request({'id':item['id'],'decision':'approve'})
             self.assertEqual(item['status'],'pending')
+
+    def test_self_revoke_is_source_bound_and_cannot_revoke_replacements(self):
+        instance=self.controller()
+        item=instance.requests.submit(SETTINGS,'10.1.0.10',payload())
+        args={'source':'10.1.0.10','request':{'id':item['id']}}
+        with patch.object(instance,'status',side_effect=lambda:{'domain_approvals':list(instance.approvals.grants.values())}), patch.object(instance,'revoke_domain') as revoke:
+            with self.assertRaises(ValueError): instance.agent_request('revoke_domain_request',args)
+            instance.requests.decided(item,'approved','a'*16)
+            instance.approvals.grants['ai-host']={'id':'a'*16}
+            with self.assertRaises(ValueError):
+                instance.agent_request('revoke_domain_request',dict(args,source='10.1.0.11'))
+            with self.assertRaises(ValueError):
+                instance.agent_request('revoke_domain_request',dict(args,request={'id':item['id'],'grant_id':'a'*16}))
+            revoke.assert_not_called()
+            def remove(_): instance.approvals.grants.clear()
+            revoke.side_effect=remove
+            self.assertEqual(instance.agent_request('revoke_domain_request',args)['status'],'ended')
+            revoke.assert_called_once_with({'id':'a'*16})
+            instance.agent_request('revoke_domain_request',args)
+            revoke.assert_called_once()
+            instance.approvals.grants['ai-host']={'id':'b'*16}
+            self.assertEqual(instance.agent_request('revoke_domain_request',args)['status'],'ended')
+            revoke.assert_called_once()
+            instance.approvals.grants.clear()
 
 
 class RestrictedSocket(unittest.TestCase):
@@ -156,7 +192,7 @@ class RestrictedSocket(unittest.TestCase):
 
 class AgentHTTP(unittest.TestCase):
     def request(self, method='POST', path='/api/domain-requests', data=None, source='10.1.0.10', extra='', host='10.1.0.1:8767', callback=None):
-        raw=json.dumps(payload() if data is None else data)
+        raw='' if data == '' else json.dumps(payload() if data is None else data)
         wire=f'{method} {path} HTTP/1.0\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {len(raw)}\r\n{extra}\r\n{raw}'
         class Connection:
             output=bytearray()
@@ -187,6 +223,18 @@ class AgentHTTP(unittest.TestCase):
         callback.assert_not_called()
         callback.side_effect=domain_requests.RequestLimit('pending')
         self.assertIn(b'429',self.request(callback=callback))
+
+    def test_self_revoke_route_requires_post_empty_body_and_valid_id(self):
+        callback=Mock(return_value={'status':'ended'})
+        path='/api/domain-requests/'+'a'*32+'/revoke'
+        self.assertIn(b'200 OK',self.request(path=path,callback=callback,data=''))
+        callback.assert_called_once_with('revoke_domain_request',payload={'source':'10.1.0.10','request':{'id':'a'*32}})
+        callback.reset_mock()
+        for args in [dict(method='GET'), dict(data={}), dict(extra='Transfer-Encoding: chunked\r\n'), dict(path='/api/domain-requests/bad/revoke'), dict(source='10.0.0.10')]:
+            options=dict(path=path,data='',callback=callback)
+            options.update(args)
+            self.assertNotIn(b'200 OK',self.request(**options))
+        callback.assert_not_called()
 
 
 class AdminHTTP(unittest.TestCase):

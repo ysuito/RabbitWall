@@ -7,7 +7,7 @@ from domain_approvals import validate_request
 
 REQUEST_PORT = 8767
 REQUEST_SOCKET = '/run/rabbitwall-requests/requests.sock'
-PUBLIC_ACTIONS = {'submit_domain_request', 'domain_request_status'}
+PUBLIC_ACTIONS = {'submit_domain_request', 'domain_request_status', 'revoke_domain_request'}
 MAX_REQUESTS = 64
 
 

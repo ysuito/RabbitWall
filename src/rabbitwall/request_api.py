@@ -33,7 +33,7 @@ def make_handler(config=SETTINGS, callback=None):
             self.end_headers()
             self.wfile.write(body)
 
-        def dispatch(self, submit=False):
+        def dispatch(self, submit=False, revoke=False):
             # This endpoint is for local agents, not browser cross-origin access.
             if (self.headers.get('Host') != f'{address}:{REQUEST_PORT}'
                     or self.headers.get('Origin') is not None
@@ -53,11 +53,18 @@ def make_handler(config=SETTINGS, callback=None):
                     action = 'submit_domain_request'
                 else:
                     prefix = '/api/domain-requests/'
-                    identity = self.path[len(prefix):] if self.path.startswith(prefix) else ''
+                    path = self.path
+                    if revoke:
+                        if not path.endswith('/revoke'):
+                            self.reply(404, {'error':'Not found'}); return
+                        path = path[:-len('/revoke')]
+                        if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Length', '0') != '0':
+                            raise ValueError('Expected empty body')
+                    identity = path[len(prefix):] if path.startswith(prefix) else ''
                     if len(identity) != 32 or any(c not in '0123456789abcdef' for c in identity):
                         self.reply(404, {'error':'Not found'}); return
                     payload = {'id':identity}
-                    action = 'domain_request_status'
+                    action = 'revoke_domain_request' if revoke else 'domain_request_status'
                 result = callback(action, payload={'source':self.client_address[0], 'request':payload})
                 self.reply(201 if submit else 200, {'request':result})
             except (TimeoutError, socket.timeout): self.reply(408, {'error':'HTTP receive deadline exceeded'})
@@ -65,7 +72,7 @@ def make_handler(config=SETTINGS, callback=None):
             except ValueError as exc: self.reply(400, {'error':str(exc)})
             except Exception: self.reply(503, {'error':'Request service unavailable; do not assume approval'})
 
-        def do_POST(self): self.dispatch(True)
+        def do_POST(self): self.dispatch(submit=self.path == '/api/domain-requests', revoke=self.path != '/api/domain-requests')
         def do_GET(self): self.dispatch()
 
     return Handler

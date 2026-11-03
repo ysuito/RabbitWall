@@ -55,6 +55,10 @@ curl --noproxy '*' --fail-with-body --max-time 10 \
 
 Only the creating source IP can retrieve a request. Poll at intervals of at least five seconds. Status is `pending`, `rejected`, `approved` or `ended` (expired, revoked or replaced). Even after approval, wait for the domain's `request.approval.records` entry to contain public IPv4 `addresses`. Errors and missing requests do not imply approval.
 
+After completing work, send an empty-body `POST /api/domain-requests/<request.id>/revoke` from the submitting source IP. Verify HTTP 200 and `request.status: ended`. This revokes only the grant associated with that request. Expired, revoked or replaced grants are a no-op; newer grants remain unchanged. Pending, rejected or missing requests, another source IP, and changed node registration are rejected. No management credentials are needed. If revocation fails, stop external access and contact the administrator.
+
+For agents, normally request 1800 seconds (30 minutes) to allow for local LLM inference, tool execution and result review; brief tasks can use 60 or 300 seconds. Time starts at approval. Revoke access when work finishes. Required API fields and accepted durations are unchanged.
+
 The review page uses two-line firewall-style rows with a prominent timestamp, `Src:`, `Dst:` and `Duration:` on the first line, a smaller purpose on the second line, and a per-grant countdown updated every second. Long values wrap without truncation. Manual entry and decided requests are collapsed; explanations are available in the **? TIPS** overlay.
 
 New requests show a full-width strip below the header and a pending count in the navigation on every screen. The strip shows each requester, source IP, all domains, purpose, requested duration and submission time without covering page content. Administrators can approve or reject directly and see the result without navigating away. It uses amber warning colors independently of the selected theme. Enable **通知音** in the header to hear a confirmation chime and a chime for each new arrival. Polling and reconnects do not repeat notifications for the same request. Checks run approximately every five seconds while the page is open. The sound preference is saved in localStorage and restored after reload. If autoplay is blocked, the button shows a waiting state and audio resumes after a user gesture; browser suspension or a muted device can prevent notification.
@@ -63,7 +67,7 @@ Administrators use **許 → 承認待ち** in the certificate-authenticated con
 
 Each node can have one pending request, with at least ten seconds between submissions; the global store holds at most 64 requests. Limits return HTTP 429. Pending requests disappear after ten minutes; decided requests disappear thirty minutes after the decision. Requests and grants are volatile and disappear on controller restart. Requests cannot be approved after the node's address changes.
 
-The unprivileged ingress uses a separate Unix socket and group. That socket accepts only creation and status checks, rejecting approval, extension, opening, and configuration reads/writes. Browser Origin and cross-site requests are rejected; no CORS is provided. Host identity relies on source IP and transport is plaintext HTTP within the downlink. Do not send secrets; use network isolation such as VLANs for mutually hostile hosts.
+The unprivileged ingress uses a separate Unix socket and group. That socket accepts only creation, status checks and revocation of the grant tied to the caller's own request, rejecting approval, extension, opening, and configuration reads/writes. Browser Origin and cross-site requests are rejected; no CORS is provided. Host identity relies on source IP and transport is plaintext HTTP within the downlink. Do not send secrets; use network isolation such as VLANs for mutually hostile hosts.
 
 ## Agent instructions and administrator API
 
