@@ -86,3 +86,5 @@ curl --noproxy '*' --fail-with-body --max-time 10 \
 ```
 
 `GET /api/control` の `control.domain_requests` に申請、`control.domain_approvals` に有効な許可を含めます。申請判断はIDだけを受け付け、申請後の本文差し替えはできません。申請・判断と既存の承認・取消しはjournalに記録します。
+
+監査ファイルの保存先・保持容量・確認方法は[運用手順の監査ログ](OPERATIONS.ja.md#監査ログ)を参照してください。

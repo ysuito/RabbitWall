@@ -272,3 +272,15 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 .approval-countdown{font-size:14px}
 @media(min-width:1050px){.grant-actions{flex-direction:row}}
 @media(max-width:650px){.log-primary{gap:4px 12px;font-size:16px}.log-dst .log-value{font-size:17px}.connection-log .log-purpose{font-size:11px}}
+
+/* Compact, full-width audit records. */
+.audit-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0}
+.audit-toolbar input[type="search"]{flex:1;min-width:220px}.audit-toolbar select{width:auto;max-width:100%}
+.audit-toolbar label{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px}.audit-toolbar input[type="checkbox"]{width:auto}
+.audit-entry{padding:12px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.audit-primary{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 18px;font:14px/1.7 ui-monospace,monospace}
+.audit-primary .audit-event{color:var(--accent)}.audit-time,.audit-actor{color:var(--muted)}
+.audit-destination,.audit-source{border:1px solid var(--line);padding:0 5px}.audit-purpose{font-size:12px;color:var(--muted);white-space:normal;min-width:0}
+.audit-entry details{font-size:11px;color:var(--muted);margin-top:6px}.audit-entry pre{white-space:pre-wrap;max-height:300px;overflow:auto}
+.audit-failure{border-left:3px solid #d46a45;padding-left:12px}.audit-failure .audit-result,#audit-message[data-state="error"]{color:#df8058}
+@media(max-width:650px){.audit-toolbar{gap:8px}.audit-toolbar input[type="search"]{flex-basis:100%}.audit-primary{gap:4px 12px;font-size:13px}}

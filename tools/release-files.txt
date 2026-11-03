@@ -97,3 +97,7 @@ src/rabbitwall/http_limits.py
 tests/test_http_limits.py
 
 docs/SECURITY_REMAINING.ja.md
+src/rabbitwall/audit.py
+tests/test_audit.py
+src/rabbitwall/static/audit-view.js
+tests/test_audit_view.cjs

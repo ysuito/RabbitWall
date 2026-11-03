@@ -5,6 +5,7 @@ let controlReceivedAt = performance.now();
 let controlAuthorized = false;
 let nodeSettings=null, nodeDraft=[], nodeDirty=false, nodeBusy=false;
 const $ = id => document.getElementById(id);
+const auditView = new window.AuditView();
 const requestNotifications = new window.RequestNotifications();
 const requestSound = new window.RequestSound(() => {
   const Audio = window.AudioContext || window.webkitAudioContext;
@@ -154,7 +155,7 @@ function direction(flow) {
   return flow.scope === "MANAGEMENT" ? rabbitwall ? "LAN → RabbitWall" : "LAN → AI" : flow.scope === "RABBITWALL" ? "RabbitWall発信" : rabbitwall ? "AI → RabbitWall" : "AI → 上流";
 }
 function navigate() {
-  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析",approvals:"一時許可"};
+  const pages = {monitor:"広域通信監視",sessions:"通信記録一覧",settings:"環境設定",analytics:"通信分析",approvals:"一時許可",audit:"監査ログ"};
   const page = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : "monitor";
   for (const element of document.querySelectorAll("[data-page]")) element.hidden = element.dataset.page !== page;
   for (const link of document.querySelectorAll("[data-nav]")) {
@@ -171,6 +172,7 @@ function navigate() {
   }
   if(page==="approvals")loadApprovalNodes();
   if(page==="settings" && !nodeBusy && !nodeDirty)loadNodeSettings();
+  auditView.setActive(page === "audit");
   atlas.setActive(page === "monitor");
   render();
 }

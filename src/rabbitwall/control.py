@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed-purpose local controller; accepts only validated node settings, never nft commands from HTTP."""
 import argparse
+import audit
 import concurrent.futures
 import datetime as dt
 import grp
@@ -55,7 +56,7 @@ def validate_duration(enabled, duration):
 
 
 def request_control(action, path=SOCKET, payload=None):
-    if action not in {"status", "enable", "disable", "nodes", "save_nodes", "approve_domains", "revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS}:
+    if action not in {"status", "audit_log", "enable", "disable", "nodes", "save_nodes", "approve_domains", "revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS}:
         raise ValueError("unsupported action")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(25 if action in {"save_nodes","approve_domains","revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS} else 4)
@@ -181,6 +182,7 @@ class Controller:
     def status(self):
         actual = read_gate()
         if actual["handle"] != self.handle:
+            audit.record({'event':'gate-ended','reason':'kernel-reload'})
             # nftables reload recreates an empty gate: never restore ON silently.
             self.desired = False
             self.approvals.clear()
@@ -188,6 +190,7 @@ class Controller:
             apply_enabled(False)
             actual = read_gate()
         if self.deadline is not None and time.monotonic() >= self.deadline:
+            audit.record({'event':'gate-ended','reason':'expired'})
             self.desired = False
             apply_enabled(False)
             actual = read_gate()
@@ -260,8 +263,8 @@ class Controller:
             apply_enabled(False)
             raise
         self.error = None
-        print(json.dumps({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'domains':spec['domains'],
-                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']}),flush=True)
+        audit.record({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'source':spec['source'],'domains':spec['domains'],
+                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
         return self.status()
 
     def agent_request(self, action, payload):
@@ -272,7 +275,7 @@ class Controller:
         if not isinstance(source, str): raise ValueError('Invalid source')
         if action == 'submit_domain_request':
             item = self.requests.submit(self.config, source, data)
-            print(json.dumps({'event':'domain-request', 'at':utc_now(), **{k:v for k,v in item.items() if not k.startswith('_')}}), flush=True)
+            audit.record({'event':'domain-request', 'at':utc_now(), **{k:v for k,v in item.items() if not k.startswith('_')}})
         else:
             if not isinstance(data, dict) or set(data) != {'id'}: raise ValueError('id required')
             item = self.requests.get(data['id'])
@@ -299,19 +302,21 @@ class Controller:
             self.requests.decided(item, 'approved', self.approvals.grants[item['node_id']]['id'])
         else:
             self.requests.decided(item, 'rejected')
-        print(json.dumps({'event':'domain-request-decision', 'at':utc_now(), **payload}), flush=True)
+        audit.record({'event':'domain-request-decision', 'at':utc_now(), **payload, 'grant_id':item.get('grant_id')})
         return self.status()
 
     def revoke_domain(self, payload):
         if not isinstance(payload,dict) or set(payload)!={'id'}: raise ValueError('id required')
         if not any(g['id']==payload['id'] for g in self.approvals.grants.values()): raise ValueError('Approval no longer exists')
+        selected = next(g for g in self.approvals.grants.values() if g['id']==payload['id'])
+        detail = {key:selected[key] for key in ('node_id','source','domains','purpose','duration_seconds')}
         apply_enabled(False)
         try: self.approvals.revoke(payload['id'])
         except Exception:
             self.approvals.clear()
             apply_enabled(False)
             raise
-        print(json.dumps({'event':'domain-revoke','at':utc_now(),'id':payload['id']}),flush=True)
+        audit.record({'event':'domain-revoke','at':utc_now(),'id':payload['id'], **detail})
         return self.status()
 
     def tick(self):
@@ -335,6 +340,7 @@ class Controller:
             if self.approvals.grants or self.approvals.jobs: self.approvals.tick()
             self.error = None
         except (OSError, RuntimeError, ValueError, KeyError, StopIteration, subprocess.TimeoutExpired) as exc:
+            audit.record({'event':'controller-failure','error_type':type(exc).__name__})
             self.desired = False
             self.error = str(exc)[:500]
             self.approvals.clear()
@@ -348,6 +354,14 @@ def make_control_handler(controller):
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             self.request.settimeout(1)
+            peer = {'channel':'agent' if getattr(self.server, 'request_only', False) else 'administrator'}
+            try:
+                pid, uid, gid = struct.unpack('3i', self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                peer.update(pid=pid, uid=uid, gid=gid)
+            except (AttributeError, OSError):
+                pass
+            token = audit.actor.set(peer)
+            action, payload = 'invalid', None
             try:
                 raw = self.rfile.readline(16385)
                 if len(raw) > 16384 or not raw.endswith(b"\n"):
@@ -355,47 +369,58 @@ def make_control_handler(controller):
                 data = json.loads(raw)
                 if not isinstance(data, dict) or set(data) != ({"action", "payload"} if data.get("action") in {"save_nodes","approve_domains","revoke_domain", "decide_domain_request", *PUBLIC_ACTIONS} or (data.get("action") == "enable" and "payload" in data) else {"action"}):
                     raise ValueError("invalid control request")
+                known = {'status','audit_log','nodes','enable','disable','save_nodes','approve_domains','revoke_domain','decide_domain_request', *PUBLIC_ACTIONS}
+                if not isinstance(data['action'], str) or data['action'] not in known:
+                    raise ValueError('unsupported action')
                 action = data["action"]
+                payload = data.get('payload')
                 if getattr(self.server, 'request_only', False) and action not in PUBLIC_ACTIONS:
                     raise ValueError('Request socket cannot perform administrative operations')
+                if action not in {'status','audit_log','nodes','domain_request_status'}:
+                    audit.operation(action, payload, 'started')
                 if action in PUBLIC_ACTIONS:
                     status = controller.agent_request(action, data['payload'])
                 elif action == 'decide_domain_request':
                     status = controller.decide_domain_request(data['payload'])
                 elif action == "status":
                     status = controller.status()
+                elif action == 'audit_log':
+                    status = audit.recent(permissions_only=True)
                 elif action == "nodes":
                     status = controller.node_settings()
                 elif action in {"approve_domains","revoke_domain"}:
                     status = controller.approve_domains(data['payload']) if action == 'approve_domains' else controller.revoke_domain(data['payload'])
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({'event':action,'at':utc_now(),'pid':pid,'uid':uid,'gid':gid}),flush=True)
                 elif action == "save_nodes":
                     status = controller.save_nodes(data["payload"])
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({"event":action,"at":utc_now(),"pid":pid,"uid":uid,"gid":gid,"count":len(status["nodes"])}), flush=True)
+                    audit.record({"event":action,"count":len(status["nodes"])})
                 elif action in {"enable", "disable"}:
                     status = controller.set_enabled(action == "enable", data.get("payload"))
-                    pid, uid, gid = struct.unpack("3i", self.request.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                    print(json.dumps({"event": action, "at": utc_now(), "pid": pid, "uid": uid, "gid": gid,
-                                      "enabled": status["enabled"], "duration_seconds": data.get("payload")}), flush=True)
+                    audit.record({"event": action,
+                                      "enabled": status["enabled"], "duration_seconds": data.get("payload")})
                 else:
                     raise ValueError("unsupported action")
                 response = {"ok": True, "status": status}
+                if action not in {'status','audit_log','nodes','domain_request_status'}:
+                    audit.operation(action, payload, 'success')
             except Exception as exc:
+                audit.operation(action, payload, 'failure', exc)
                 response = {"ok": False, "error": str(exc)[:500], "conflict":isinstance(exc, node_config.RevisionConflict), "invalid":isinstance(exc, ValueError), "limited":isinstance(exc, RequestLimit)}
             try:
                 self.wfile.write((json.dumps(response) + "\n").encode())
             except OSError:
                 pass
+            finally:
+                audit.actor.reset(token)
 
     return Handler
 
 
 def run_controller():
+    audit.configure()
+    audit.record({'event':'controller-starting','reason':'volatile-grants-reset-on-start'})
     controller = Controller()
     controller.approvals.reset_runtime()
-    print(json.dumps({"event": "controller-start", "enabled": False, "at": utc_now()}), flush=True)
+    audit.record({"event": "controller-start", "enabled": False, "at": utc_now()})
     running = True
     def stop(*_):
         nonlocal running
@@ -441,9 +466,11 @@ def run_controller():
                 for selected in ready:
                     selected.handle_request()
         finally:
+            audit.record({'event':'controller-stopping'})
             controller.desired = False
             controller.approvals.close()
             apply_enabled(False)
+            audit.record({'event':'controller-stop','enabled':False})
             SOCKET.unlink(missing_ok=True)
             request_path.unlink(missing_ok=True)
 

@@ -177,7 +177,7 @@ class RestrictedSocket(unittest.TestCase):
             def settimeout(self,_): pass
             def makefile(self,*_): return self.input
             def sendall(self,data): self.output.extend(data)
-        for action in ('enable','disable','status','nodes','save_nodes','approve_domains','revoke_domain','decide_domain_request'):
+        for action in ('enable','disable','status','audit_log','nodes','save_nodes','approve_domains','revoke_domain','decide_domain_request'):
             data={'action':action}
             if action in ('save_nodes','approve_domains','revoke_domain','decide_domain_request'):data['payload']={}
             conn=Connection(data);handler(conn, '', Server())

@@ -84,3 +84,5 @@ The administrator's `POST /api/domain-approvals` retains manual approval/revocat
 ```
 
 These actions require mTLS, the server-only key and same-origin checks. Never give agents management credentials. `GET /api/control` includes requests in `control.domain_requests` and active grants in `control.domain_approvals`. Submission, decisions, grants and revocations are logged to the journal.
+
+See the [operations audit trail](OPERATIONS.md#audit-trail) for persistent storage, rotation and inspection.

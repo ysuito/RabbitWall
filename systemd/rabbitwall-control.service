@@ -15,6 +15,8 @@ Group=rabbitwall-control
 SupplementaryGroups=rabbitwall-dns rabbitwall-requests
 RuntimeDirectory=rabbitwall rabbitwall-requests
 RuntimeDirectoryMode=0750
+LogsDirectory=rabbitwall
+LogsDirectoryMode=0700
 UMask=0027
 Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
 NoNewPrivileges=yes

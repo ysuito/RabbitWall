@@ -349,6 +349,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             return dict(demo_control)
         return callback(action) if duration_seconds is None else callback(action, payload=duration_seconds)
 
+    demo_audit_time = utc_now()
     demo_config = json.loads(json.dumps(SETTINGS))
     demo_lock = threading.Lock()
     if demo:
@@ -518,6 +519,20 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 return
             path = urlsplit(self.path).path
             status = 200
+            if path == '/api/audit':
+                if not self.access_status()['can_control']:
+                    self.send_payload(403, {'error':'監査ログは証明書付きHTTPSで接続して確認してください。'})
+                    return
+                try:
+                    result = {'entries':[
+                        {'at':demo_audit_time,'event':'domain-revoke','id':'b'*16,'node_id':'ai-host','source':next((n['ip'] for n in demo_config['nodes'] if n['interface']==demo_config['ai_if']), AI_IP),'domains':['example.com'],'purpose':'依存パッケージの取得完了','duration_seconds':1800,'actor':{'channel':'agent'}},
+                        {'at':demo_audit_time,'event':'domain-request-decision','id':'a'*32,'grant_id':'b'*16,'decision':'approve','actor':{'channel':'administrator'}},
+                        {'at':demo_audit_time,'event':'domain-request','id':'a'*32,'source':next((n['ip'] for n in demo_config['nodes'] if n['interface']==demo_config['ai_if']), AI_IP),'domains':['example.com'],'purpose':'依存パッケージの取得','duration_seconds':1800,'actor':{'channel':'agent'}}
+                    ], 'available':True, 'limited':False} if demo else callback('audit_log')
+                    self.send_payload(200, {'audit':result,'demo':demo})
+                except Exception:
+                    self.send_payload(503, {'error':'監査ログを取得できません。controlサービスとログ保存先を確認してください。'})
+                return
             if path == '/api/domain-approvals':
                 try: self.send_payload(200, {'control':control_status(), 'demo':demo})
                 except Exception: self.send_payload(503, {'error':'制御状態を取得できません。'})
@@ -545,7 +560,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                     status, mime = 503, "application/json; charset=utf-8"
                     payload = json.dumps({"error": "収集データを読み込めません。collectorサービスを確認してください。",
                                           "detail": str(exc)[:200]}, ensure_ascii=False).encode()
-            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/request-notifications.js", "/world.json", "/style.css"}:
+            elif path in {"/", "/index.html", "/app.js", "/atlas.js", "/request-notifications.js", "/audit-view.js", "/world.json", "/style.css"}:
                 filename = "index.html" if path == "/" else path[1:]
                 mime = {"html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8",
                         "css": "text/css; charset=utf-8", "json": "application/json; charset=utf-8"}[filename.split(".")[-1]]
