@@ -101,3 +101,6 @@ src/rabbitwall/audit.py
 tests/test_audit.py
 src/rabbitwall/static/audit-view.js
 tests/test_audit_view.cjs
+
+src/rabbitwall/static/globe.js
+tests/test_globe.cjs

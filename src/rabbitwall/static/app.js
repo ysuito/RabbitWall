@@ -122,9 +122,20 @@ let sessionView = "map";
 const atlas = new window.SessionAtlas({canvas:$("atlas-canvas"), list:$("atlas-routes"),
   detail:$("atlas-detail"), summary:$("atlas-summary"), onInspect:address => {
     $("search").value = address; setSessionView("table"); render();
-  },onSelectionChange:key=>{$("atlas-clear").disabled=!key;}});
+  },onSelectionChange:key=>{$("atlas-clear").disabled=!key;renderAtlasControls();}});
+function renderAtlasControls(){
+  $("atlas-mode").textContent=atlas.globeMode ? "平 / 2Dへ" : "球 / 3Dへ";
+  $("atlas-mode").setAttribute("aria-pressed",String(atlas.globeMode));
+  $("atlas-rotate").textContent=atlas.rotating ? atlas.selected ? "自転待機" : "自転停止" : "自転再開";
+  $("atlas-rotate").setAttribute("aria-pressed",String(atlas.rotating));
+  $("atlas-rotate").disabled=!atlas.globeMode;
+  $("atlas-rotate").title=atlas.selected ? "経路選択中は自転を一時停止します。選択解除で再開します。" : "約3分で一周します。";
+  document.querySelector(".atlas-title small").textContent=atlas.globeMode ? "GLOBE / ドラッグで回転・ホイールで拡縮" : "PACIFIC / ホイールで拡縮・ドラッグで移動";
+  $("atlas-canvas").setAttribute("aria-label",atlas.globeMode ? "回転する地球儀と手前のLANセグメントの通信マップ" : "太平洋を中心にした世界地図とLAN拠点の通信マップ");
+}
+renderAtlasControls();
 $("atlas-pause").setAttribute("aria-pressed", String(atlas.paused));
-$("atlas-pause").textContent = atlas.paused ? "動 / 演出再開" : "止 / 演出停止";
+$("atlas-pause").textContent = atlas.paused ? "動 / 通信再開" : "止 / 通信停止";
 function setSessionView(view) {
   const page=view==="map" ? "monitor" : "sessions";
   if(location.hash.slice(1)===page)navigate();else location.hash=page;
@@ -133,7 +144,7 @@ function resetAtlasView() {
   $("search").value="";$("scope").value="related";$("proto").value="all";tab="flows";
   for(const name of Object.keys(heads)){$("tab-"+name).classList.toggle("selected",name===tab);$("tab-"+name).setAttribute("aria-selected",String(name===tab));}
   atlas.clearSelection();atlas.setPaused(atlas.initialPaused);
-  $("atlas-pause").setAttribute("aria-pressed",String(atlas.paused));$("atlas-pause").textContent=atlas.paused ? "動 / 演出再開" : "止 / 演出停止";
+  $("atlas-pause").setAttribute("aria-pressed",String(atlas.paused));$("atlas-pause").textContent=atlas.paused ? "動 / 通信再開" : "止 / 通信停止";
   atlas.resetPosition();
   setSessionView("map");render();
 }
@@ -430,8 +441,10 @@ $("view-map").addEventListener("click", () => setSessionView("map"));
 $("view-table").addEventListener("click", () => setSessionView("table"));
 $("atlas-pause").addEventListener("click", () => {
   atlas.setPaused(!atlas.paused); $("atlas-pause").setAttribute("aria-pressed", String(atlas.paused));
-  $("atlas-pause").textContent = atlas.paused ? "動 / 演出再開" : "止 / 演出停止";
+  $("atlas-pause").textContent = atlas.paused ? "動 / 通信再開" : "止 / 通信停止";
 });
+$("atlas-mode").addEventListener("click",()=>{atlas.setGlobeMode(!atlas.globeMode);renderAtlasControls();});
+$("atlas-rotate").addEventListener("click",()=>{atlas.setRotating(!atlas.rotating);renderAtlasControls();});
 $("atlas-clear").addEventListener("click",()=>atlas.clearSelection());
 $("atlas-reset").addEventListener("click",resetAtlasView);
 window.addEventListener("hashchange", navigate);

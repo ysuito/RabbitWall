@@ -16,6 +16,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -B -m unittest discover -s tests -p 'test_*.py'
       - run: node tests/test_atlas.cjs
+      - run: node tests/test_globe.cjs
       - run: node tests/test_request_notifications.cjs
       - run: node tests/test_audit_view.cjs
       - run: python tools/release.py
