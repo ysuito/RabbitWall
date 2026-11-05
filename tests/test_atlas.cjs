@@ -2,7 +2,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const {routeVisual,byteLabel,groupFlows, quadratic, routeColor, projection, unwrapRing, pacificInset, toggledSelection, SessionAtlas} = require("../src/rabbitwall/static/atlas.js");
+const {routeDomains,placeRouteLabels,intersects,routeVisual,byteLabel,groupFlows, quadratic, routeColor, projection, unwrapRing, pacificInset, toggledSelection, SessionAtlas} = require("../src/rabbitwall/static/atlas.js");
 const world = JSON.parse(fs.readFileSync(path.join(__dirname,"../src/rabbitwall/static/world.json"), "utf8"));
 const privateIP = {kind:"private",code:null}, us = {kind:"country",code:"US"};
 const flow = {src:"10.1.0.10",dst:"8.8.8.8",sport:50000,dport:443,proto:"TCP",service:"HTTPS",state:"ESTABLISHED",
@@ -168,3 +168,43 @@ assert.equal(groupFlows([noGeo],world.countries,'drops').routes[0].dst.kind,'unk
 // Other views continue to use actual IP endpoints, not speculative DNS geography.
 assert.equal(groupFlows([inferred],world.countries,'flows').routes[0].dst.kind,'local');
 console.log('Session atlas: passive DNS-country candidates, multi-country fanout, unknown fallback and real endpoints passed.');
+
+// Route labels preserve DNS evidence and avoid the LAN inset, country names and each other.
+assert.deepEqual(routeDomains({flows:[{domain_hints:[{domain:'API.Example.com'},{domain:'api.example.com.'}],dns_questions:[{name:'Other.example.'},{name:'.'}]}]}),['api.example.com','other.example']);
+function labeledPath(key,domains=['api.example.com']) {
+  return {route:{key,src:{kind:'local'},dst:{kind:'country'},flows:[{domain_hints:domains.map(domain=>({domain}))}]},
+    a:{x:150,y:320},b:{x:400,y:30},c:{x:720,y:170}};
+}
+const obstacles=[{x:0,y:0,width:800,height:88},{x:40,y:250,width:200,height:130},{x:680,y:140,width:110,height:55}];
+const labeledPaths=[labeledPath('one'),labeledPath('two',['two.example']),labeledPath('long',['a-very-long-subdomain.'.repeat(12)+'example.com','second.example','third.example'])];
+const labels=placeRouteLabels(labeledPaths,{width:800,height:400,obstacles});
+assert.equal(labels.length,3);
+for(const label of labels){
+  assert.ok(label.rect.x>=0 && label.rect.x+label.rect.width<=800 && label.rect.y>=0 && label.rect.y+label.rect.height<=400);
+  assert.ok(obstacles.every(box=>!intersects(label.rect,box)));
+  assert.ok(labels.filter(other=>other!==label).every(other=>!intersects(label.rect,other.rect)));
+}
+assert.ok(labels.find(label=>label.key==='long').text.includes('…'));
+assert.ok(labels.find(label=>label.key==='long').text.endsWith('+2'));
+assert.equal(placeRouteLabels(labeledPaths,{width:800,height:400,obstacles:[{x:0,y:0,width:800,height:400}]}).length,0);
+assert.equal(placeRouteLabels([labeledPath('none',[])],{width:800,height:400}).length,0);
+const local=labeledPath('local');local.route.dst.kind='local';
+assert.equal(placeRouteLabels([local],{width:800,height:400}).length,0);
+assert.equal(placeRouteLabels(labeledPaths,{width:800,height:400,obstacles,selected:'two'})[0].key,'two');
+const manyLabels=Array.from({length:30},(_,index)=>{
+  const item=labeledPath('label-'+index);
+  for(const point of [item.a,item.b,item.c])point.x+=index*350;
+  return item;
+});
+const boundedLabels=placeRouteLabels(manyLabels,{width:12000,height:400,selected:'label-29'});
+assert.equal(boundedLabels.length,16);
+assert.equal(boundedLabels[0].key,'label-29');
+const zoomedLabels=placeRouteLabels(labeledPaths,{width:800,height:400,zoom:2});
+for(const label of zoomedLabels)assert.ok(label.rect.x+label.rect.width<=800 && label.rect.y+label.rect.height<=400);
+// Clicking a badge uses screen coordinates, independently of map zoom.
+const badge=Object.create(SessionAtlas.prototype);let labelPicked;
+badge.width=800;badge.height=400;badge.zoom=2;badge.canvas={getBoundingClientRect:()=>({left:20,top:30,width:800,height:400})};
+badge.routeLabels=labels;badge.paths=[];badge.select=key=>labelPicked=key;
+badge.pick({clientX:20+labels[0].rect.x+5,clientY:30+labels[0].rect.y+5});
+assert.equal(labelPicked,labels[0].key);
+console.log('Session atlas: domain labels, deduplication, crowded-route suppression, selected-route priority, viewport bounds and label selection passed.');

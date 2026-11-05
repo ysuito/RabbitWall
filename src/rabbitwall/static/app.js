@@ -245,7 +245,7 @@ function renderControl() {
   for (const node of control?.nodes || []) {
     const row = document.createElement("div"); row.className = "node-row";
     const identity = document.createElement("div"), title = document.createElement("strong"), ip = document.createElement("code");
-    title.textContent = node.name; ip.textContent = node.ip; identity.append(title, ip);
+    title.textContent = node.name; title.title=node.name; ip.textContent = node.ip; identity.append(title, ip);
     const status = document.createElement("span"), last = document.createElement("small");
     status.className = "node-state " + (node.state === "up" ? "good" : node.state === "disabled" ? "idle" : "warn");
     status.textContent = node.state === "up" ? "正" : node.state === "no_reply" ? "断" : node.state === "disabled" ? "休" : "不";
@@ -253,8 +253,8 @@ function renderControl() {
     const age = Date.now() - new Date(node.checked_at).getTime();
     if (!control.available || age > 30000) { status.textContent = !control.available ? "不" : "古"; status.className = "node-state warn";description=!control.available ? "状態未確認" : "監視データが古い"; }
     status.title=description;status.setAttribute("aria-label",description);
-    last.textContent = (node.state === "disabled" ? "監視なし" : node.latency_ms == null ? "LOCAL" : node.latency_ms+" ms") + " / " + clock(node.checked_at);
-    last.title="最終正常 "+clock(node.last_success);identity.append(last);row.append(status,identity);$("nodes").append(row);
+    last.textContent = node.state === "disabled" ? "監視なし" : node.latency_ms == null ? "LOCAL" : node.latency_ms+" ms";
+    last.title="確認 "+clock(node.checked_at)+" / 最終正常 "+clock(node.last_success);last.setAttribute("aria-label",last.textContent+" / "+last.title);identity.append(last);row.append(status,identity);$("nodes").append(row);
   }
   if (!(control?.nodes || []).length) { const p = document.createElement("p"); p.className = "muted"; p.textContent = "監視データはまだありません。"; $("nodes").append(p); }
   updateNodeButtons();

@@ -15,6 +15,8 @@ Node status labels are **正** (healthy), **断** (no Ping response), **不** (u
 
 Use the mouse wheel over the map to zoom between 1× and 6× around the cursor. The LAN layout, labels and routes zoom together. Drag to pan; Initial view resets both zoom and position. Ctrl/Command wheel gestures remain available to the browser.
 
+External routes display domain labels inferred from observed DNS where space permits, avoiding the LAN inset, country names and other labels. At most 16 labels appear. Multiple candidates use representative names and an additional count; long names are shortened. Click a label to inspect the route's candidates. Placement adapts to zoom/pan while domain-label text stays the same size.
+
 ## Opening and closing Internet access
 
 Use the toggle through the management PC's mTLS connection. The gate starts **閉 (closed)** after a reboot, controller restart, installation or update. While **開 (open)**, access is maintained by a 20-second kernel lease that the controller renews. If renewal stops, the lease expires and access closes.
