@@ -4,6 +4,7 @@ let control = null, controlBusy = false, controlDemo = false, controlEpoch = 0;
 let controlReceivedAt = performance.now();
 let controlAuthorized = false;
 let nodeSettings=null, nodeDraft=[], nodeDirty=false, nodeBusy=false;
+let approvalNodes=[], approvalNodesLoading=false, gateTargetSignature=null;
 const $ = id => document.getElementById(id);
 const auditView = new window.AuditView();
 const requestNotifications = new window.RequestNotifications();
@@ -170,7 +171,7 @@ function navigate() {
     $(page==="monitor" ? "map-controls" : "list-controls").append($("session-controls"));
     for(const name of ["map","table"]){$("view-"+name).classList.toggle("selected",sessionView===name);$("view-"+name).setAttribute("aria-pressed",String(sessionView===name));}
   }
-  if(page==="approvals")loadApprovalNodes();
+  if(page==="approvals" || page==="monitor")loadApprovalNodes();
   if(page==="settings" && !nodeBusy && !nodeDirty)loadNodeSettings();
   auditView.setActive(page === "audit");
   atlas.setActive(page === "monitor");
@@ -196,28 +197,48 @@ function bytes(value) {
 function cell(row, value, className = "") {
   const td = document.createElement("td"); td.textContent = value; td.className = className; row.append(td); return td;
 }
+function gateSelection() {
+  const nodeId=$("gate-target").value;
+  const grant=(control?.domain_approvals || []).find(item=>item.node_id===nodeId);
+  const full=control?.mode==="full" || (control?.enabled && !control?.mode);
+  const remaining=nodeId ? full ? control.remaining_seconds : grant?.remaining_seconds : control?.mode==="restricted"
+    ? (control.domain_approvals?.length ? Math.min(...control.domain_approvals.map(item=>item.remaining_seconds)) : null) : control?.remaining_seconds;
+  return {nodeId,grant,full,remaining,enabled:nodeId ? Boolean(full || grant) : Boolean(control?.enabled)};
+}
+function renderGateTargets() {
+  const signature=JSON.stringify(approvalNodes);
+  if(signature===gateTargetSignature)return;
+  gateTargetSignature=signature;
+  const select=$("gate-target"),previous=select.value;
+  select.replaceChildren(new Option("全デバイス",""));
+  for(const node of approvalNodes)select.add(new Option(node.label+" / "+node.ip,node.id));
+  if([...select.options].some(option=>option.value===previous))select.value=previous;
+}
 function renderGateTimer() {
   const known = control?.available && !control.error;
-  const remaining = known && control.enabled ? control.mode === "restricted"
-    ? (control.domain_approvals?.length ? Math.min(...control.domain_approvals.map(grant=>grant.remaining_seconds)) : null) : control.remaining_seconds : null;
+  const selected=gateSelection(),remaining=known && selected.enabled ? selected.remaining : null;
   const seconds = remaining == null ? null : Math.max(0, Math.ceil(remaining - (performance.now() - controlReceivedAt) / 1000));
   $("gate-timer").textContent = seconds !== null
-    ? seconds > 0 ? `${control?.mode === "restricted" ? "次の期限まで" : "自動遮断まで"} ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2,"0")}秒` : "期限到達・遮断状態を確認中"
+    ? seconds > 0 ? `${selected.nodeId ? "残り" : control?.mode === "restricted" ? "次の期限まで" : "自動遮断まで"} ${Math.floor(seconds / 60)}分${String(seconds % 60).padStart(2,"0")}秒` : "期限到達・遮断状態を確認中"
     : "";
   $("gate-timer").hidden = seconds === null;
 }
 function renderControl() {
-  const known = control && control.available && !control.error;
-  const state = known ? control.mode === "restricted" ? "restricted" : control.enabled ? "online" : "offline" : "unknown";
+  renderGateTargets();
+  const known = control && control.available && !control.error,selected=gateSelection();
+  const restricted=selected.nodeId ? selected.grant && !selected.full : control?.mode==="restricted";
+  const state = known ? restricted ? "restricted" : selected.enabled ? "online" : "offline" : "unknown";
   $("gate-panel").dataset.state=state;
   $("gate-panel").setAttribute("aria-busy",String(controlBusy));
-  $("gate-state").textContent = known ? control.mode === "restricted" ? "限定開放" : control.enabled ? "開放" : "閉塞" : "不明";
+  $("gate-state").textContent = !known ? "不明" : selected.nodeId && selected.full ? "全体開放中" : restricted
+    ? selected.nodeId ? selected.grant.scope==="any" ? "全域許可" : "限定許可" : "個別許可" : selected.enabled ? "開放" : "閉塞";
   $("gate-state").className = "gate-state " + state;
-  $("internet-toggle").disabled=controlBusy || !controlAuthorized;
-  $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && control.enabled)));
-  $("internet-toggle").setAttribute("aria-label",known ? "AIセグメントの対外接続" : "AIセグメントの対外接続・状態不明（操作すると閉じます）");
-  $("internet-toggle").title=controlBusy ? "変更中…" : !controlAuthorized ? "証明書付きHTTPSで接続してください" : known ? control.enabled ? "接続を閉じる" : "接続を開く" : "接続を閉じる（現在の状態は不明）";
-  document.querySelectorAll("[data-duration]").forEach(button => { button.disabled=controlBusy || !controlAuthorized; });
+  $("internet-toggle").disabled=controlBusy || !controlAuthorized || Boolean(selected.nodeId && (!known || selected.full));
+  $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && selected.enabled)));
+  $("internet-toggle").setAttribute("aria-label",selected.nodeId ? "選択デバイスの対外接続" : "AIセグメントの対外接続");
+  $("internet-toggle").title=controlBusy ? "変更中…" : !controlAuthorized ? "証明書付きHTTPSで接続してください" : selected.nodeId && selected.full ? "全体開放中です。時間ボタンで個別許可に切り替えます" : selected.enabled ? "接続を閉じる" : selected.nodeId ? "このデバイスを5分間全域許可" : "接続を開く";
+  document.querySelectorAll("[data-duration]").forEach(button => { button.disabled=controlBusy || !controlAuthorized || Boolean(selected.nodeId && !known); });
+  $("gate-target").disabled=controlBusy;
   renderGateTimer();
   $("auth-link").hidden=controlAuthorized;
   $("nodes").replaceChildren();
@@ -403,7 +424,8 @@ $("export").addEventListener("click", () => {
   const a = document.createElement("a"); a.href = url; a.download = "rabbitwall-sessions-" + new Date().toISOString().replace(/[:.]/g,"-") + ".json"; a.click(); setTimeout(() => URL.revokeObjectURL(url),1000);
 });
 refresh();
-$("internet-toggle").addEventListener("click", () => setInternet(Boolean(control?.available && !control.error && !control.enabled)));
+$("internet-toggle").addEventListener("click", () => changeGate(Boolean(control?.available && !control.error && !gateSelection().enabled)));
+$("gate-target").addEventListener("change",()=>{ $("control-message").textContent=gateSelection().nodeId ? gateSelection().full ? "時間を選ぶと全体開通を停止し、個別許可に切り替えます。" : "時間を選ぶと、このデバイスを全域許可します。" : ""; renderControl(); });
 $("view-map").addEventListener("click", () => setSessionView("map"));
 $("view-table").addEventListener("click", () => setSessionView("table"));
 $("atlas-pause").addEventListener("click", () => {
@@ -508,36 +530,40 @@ $("node-form").addEventListener("submit",async event=>{
     const data=await response.json();if(!response.ok)throw new Error(response.status===409 ? "ほかの画面で設定が変更されました。再読み込みしてから編集してください。" : data.error || "保存失敗");
     nodeSettings=data.settings;nodeDraft=structuredClone(data.settings.nodes);nodeDirty=false;renderNodeEditor();
     $("node-message").textContent=data.demo ? "試験表示：デモ内に保存しました。" : "保存して反映しました。対外接続の開閉状態は変更していません。";
-    refreshControl();refresh();
+    loadApprovalNodes();refreshControl();refresh();
   }catch(error){$("node-message").textContent="保存結果を確認してください："+error.message;}
   finally{nodeBusy=false;updateNodeButtons();}
 });
 
-document.querySelectorAll("[data-duration]").forEach(button => button.addEventListener("click", () => setInternet(true, Number(button.dataset.duration))));
+document.querySelectorAll("[data-duration]").forEach(button => button.addEventListener("click", () => changeGate(true, Number(button.dataset.duration))));
 
 setInterval(()=>{renderGateTimer();renderApprovalTimers();}, 1000);
 
 
 async function loadApprovalNodes() {
+  if(approvalNodesLoading)return;
+  approvalNodesLoading=true;
   try {
     const response=await fetch("/api/nodes",{cache:"no-store",signal:AbortSignal.timeout(8000)});
     const data=await response.json();if(!response.ok)throw new Error(data.error || "ノードを取得できません");
     const select=$("approval-node"),previous=select.value;
     select.replaceChildren();
     const ai=data.settings.interfaces.find(item=>item.side==="AI")?.name;
-    for(const node of data.settings.nodes.filter(node=>node.interface===ai)){
+    approvalNodes=data.settings.nodes.filter(node=>node.interface===ai);
+    for(const node of approvalNodes){
       const option=document.createElement("option");option.value=node.id;option.textContent=node.label+" / "+node.ip;select.append(option);
     }
     if([...select.options].some(option=>option.value===previous))select.value=previous;
     $("approval-message").textContent=select.options.length ? "" : "環境設定でAI側ノードを登録してください。";
-    renderApprovals();
+    renderGateTargets();renderControl();
   } catch(error){$("approval-message").textContent=error.message;}
+  finally{approvalNodesLoading=false;}
 }
 function renderApprovals(){
   const known=control?.available && !control.error;
   renderRequestNotifications();
   document.querySelector('[data-page="approvals"]').dataset.state=known ? control.enabled ? "active" : "closed" : "unknown";
-  $("approval-mode").textContent=!known ? "状態不明" : control.mode === "restricted" ? "限定開放" : control.enabled ? "開放" : "閉塞";
+  $("approval-mode").textContent=!known ? "状態不明" : control.mode === "restricted" ? "個別許可" : control.enabled ? "開放" : "閉塞";
   $("approval-submit").disabled=controlBusy || !controlAuthorized || !$("approval-node").options.length;
   const items=control?.domain_requests || [];
   const signature=JSON.stringify([items,controlBusy,controlAuthorized]);
@@ -570,7 +596,7 @@ function renderApprovals(){
     const entry=document.createElement("article");entry.className="approval-entry grant-entry";
     const main=document.createElement("div");main.className="approval-main";
     main.append(connectionLog(grant));
-    const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent="接続先の状態";detail.dataset.grantId=grant.id;detail.open=expanded.has(grant.id);detail.append(summary);
+    const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent=grant.scope==="any" ? "全域許可：公開IPv4のHTTP／HTTPS・NTP" : "接続先の状態";detail.dataset.grantId=grant.id;detail.open=expanded.has(grant.id);detail.append(summary);
     const records=document.createElement("ul");
     for(const record of grant.records || []){
       const line=document.createElement("li");line.textContent=record.domain+" → "+(record.addresses.length ? record.addresses.join(", ") : record.error || "DNSを確認中・通信は未許可");records.append(line);
@@ -601,11 +627,20 @@ async function changeDomains(action,request){
     const response=await fetch("/api/domain-approvals",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,request}),signal:AbortSignal.timeout(30000)});
     const data=await response.json();if(!response.ok)throw new Error(data.error || "操作に失敗しました");
     control=data.control;controlReceivedAt=performance.now();controlDemo=data.demo;
-    $("approval-message").textContent=controlDemo ? "試験表示：実際の通信許可やDNS照会は行っていません。" : (action==="approve" || action==="approve_request") ? "限定許可を反映しました。解決済みIPだけが接続可能になります。" : action==="reject_request" ? "申請を却下しました。" : "許可を取り消しました。";
+    $("approval-message").textContent=controlDemo ? "試験表示：実際の通信許可やDNS照会は行っていません。" : (action==="approve" || action==="approve_request") ? "一時許可を反映しました。" : action==="reject_request" ? "申請を却下しました。" : "許可を取り消しました。";
     return true;
   } catch(error){$("approval-message").textContent="結果を確認できません。再確認してください。"+error.message;return false;}
   finally{controlBusy=false;controlEpoch++;renderControl();}
 }
+async function changeGate(enabled,duration=300){
+  const selected=gateSelection();
+  if(!selected.nodeId)return setInternet(enabled,arguments.length>1 ? duration : null);
+  if(controlBusy || !controlAuthorized || !control?.available || control.error)return;
+  if(!enabled && selected.full)return;
+  const ok=enabled ? await changeDomains("approve",{node_id:selected.nodeId,domains:["Any"],duration_seconds:duration,purpose:"手動：デバイスのインターネット接続"}) : selected.grant ? await changeDomains("revoke",{id:selected.grant.id}) : true;
+  $("control-message").textContent=ok ? (controlDemo ? "試験表示 · " : "")+(enabled ? "このデバイスを全域許可しました。" : "このデバイスの許可を取り消しました。") : $("approval-message").textContent;
+}
+$("approval-any").addEventListener("click",()=>{$("approval-domains").value="Any";});
 $("approval-form").addEventListener("submit",event=>{
   event.preventDefault();
   const domains=$("approval-domains").value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);

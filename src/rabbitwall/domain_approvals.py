@@ -38,7 +38,7 @@ def parse_domains(values):
     return result
 
 
-def validate_request(config, payload):
+def validate_request(config, payload, allow_any=False):
     if not isinstance(payload, dict) or set(payload) != {'node_id','domains','duration_seconds','purpose'}:
         raise ValueError('node_id, domains, duration_seconds and purpose are required')
     node = next((node for node in config['nodes'] if node['id'] == payload['node_id'] and node['interface'] == config['ai_if']), None)
@@ -49,8 +49,14 @@ def validate_request(config, payload):
     purpose = payload['purpose']
     if not isinstance(purpose, str) or not 1 <= len(purpose.strip()) <= 200 or any(ord(c)<32 for c in purpose):
         raise ValueError('Specify a purpose, up to 200 characters')
+    names = payload['domains']
+    any_target = (isinstance(names, list) and len(names) == 1 and isinstance(names[0], str)
+                  and names[0].strip().lower() == 'any')
+    if any_target and not allow_any: raise ValueError('Any requires manual administrator approval')
     return {'node_id':node['id'], 'node_name':node['label'], 'source':node['ip'],
-            'domains':parse_domains(payload['domains']), 'duration_seconds':duration, 'purpose':purpose.strip()}
+            'domains':['Any'] if any_target else parse_domains(names),
+            'scope':'any' if any_target else 'domains',
+            'duration_seconds':duration, 'purpose':purpose.strip()}
 
 
 def resolve_domains(config, domains, deadline, cancel):
@@ -155,6 +161,7 @@ class Approvals:
             life = min([record['until']-now for record in records.values() if record['until']>now] or [10])
             grant['next_refresh'] = now+max(.25,min(60,life/2))
         for key, grant in self.grants.items():
+            if grant.get('scope') == 'any': continue
             if key not in self.jobs and grant['next_refresh'] <= now:
                 future = self.executor.submit(self.resolver, grant['config'], grant['domains'], grant['deadline'], grant['cancel'])
                 self.jobs[key] = (grant['id'],future)
@@ -166,10 +173,10 @@ class Approvals:
         result = []
         for grant in self.grants.values():
             records = []
-            for name in grant['domains']:
+            for name in ([] if grant.get('scope') == 'any' else grant['domains']):
                 record = grant['records'].get(name,{})
                 records.append({'domain':name, 'addresses':record.get('addresses',[]) if record.get('until',0)>now else [],
                                 'error':record.get('error'), 'resolving':not bool(record)})
             result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','duration_seconds','expires_at')} |
-                          {'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
+                          {'scope':grant.get('scope','domains'), 'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
         return result

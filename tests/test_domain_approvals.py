@@ -50,6 +50,35 @@ class DomainApprovals(unittest.TestCase):
         self.assertIn('github.com CNAME rpz-passthru.',zone)
         self.assertIn('api.github.com CNAME rpz-passthru.',zone)
 
+    def test_any_is_manual_only_and_cannot_mix_with_domains(self):
+        for name in ['Any','any',' ANY ']:
+            spec=payload(domains=[name])
+            with self.assertRaises(ValueError):domains.validate_request(SETTINGS,spec)
+            approved=domains.validate_request(SETTINGS,spec,allow_any=True)
+            self.assertEqual(approved['scope'],'any')
+            self.assertEqual(approved['domains'],['Any'])
+        for names in [['Any','example.com'],['*'],['0.0.0.0/0']]:
+            with self.assertRaises(ValueError):domains.validate_request(SETTINGS,payload(domains=names),allow_any=True)
+
+    def test_any_is_per_source_timed_and_never_resolves_any_as_hostname(self):
+        resolver=Mock()
+        manager,nft,guard=self.manager(resolver)
+        with patch.object(domains.time,'monotonic',return_value=100) as now:
+            manager.approve(SETTINGS,domains.validate_request(SETTINGS,payload(domains=['Any'],duration_seconds=60),allow_any=True))
+            resolver.assert_not_called()
+            snapshot=manager.snapshot()[0]
+            self.assertEqual(snapshot['scope'],'any')
+            self.assertEqual(snapshot['records'],[])
+            self.assertIn('device_sources { 10.1.0.10 timeout 20000ms }',nft.call_args[0][1])
+            self.assertNotIn('add element inet rabbitwall_console online_sources',nft.call_args[0][1])
+            now.return_value=159
+            manager.tick()
+            self.assertIn('device_sources { 10.1.0.10 timeout 1000ms }',nft.call_args[0][1])
+            now.return_value=160
+            manager.tick()
+            self.assertEqual(manager.snapshot(),[])
+            self.assertNotIn('add element',nft.call_args[0][1])
+
     def manager(self,resolver=None):
         nft=Mock();guard=Mock()
         manager=domains.Approvals(nft,guard=guard,resolver=resolver or (lambda *args:{'allowed.example':{'addresses':['1.1.1.1'],'until':time.monotonic()+10,'error':None}}))
@@ -164,5 +193,16 @@ class DomainHTTP(unittest.TestCase):
             data=self.request('/api/control',handler=handler).split(b'\r\n\r\n',1)[1]
             self.assertEqual(json.loads(data)['control']['mode'],'closed')
         callback.assert_not_called()
+
+    def test_demo_any_grant_has_same_scope_and_expiry_as_real_controller(self):
+        handler=console.make_handler(Path('/unused'),8765,demo=True)
+        with patch.object(console.time,'monotonic',return_value=100) as now:
+            response=self.post_domains(handler,{'action':'approve','request':payload(domains=['Any'],duration_seconds=60)})
+            grant=json.loads(response.split(b'\r\n\r\n',1)[1])['control']['domain_approvals'][0]
+            self.assertEqual(grant['scope'],'any')
+            self.assertEqual(grant['records'],[])
+            now.return_value=161
+            response=self.request('/api/control',handler=handler)
+            self.assertEqual(json.loads(response.split(b'\r\n\r\n',1)[1])['control']['mode'],'closed')
 
 if __name__=='__main__':unittest.main()

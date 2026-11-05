@@ -38,6 +38,8 @@ class DNSGuard:
         for path in self.policy_file.parent.glob('rw-*.zone'): path.unlink()
 
     def apply(self, grants):
+        # Any clients receive ordinary DNS; only exact-domain clients get RPZ tags.
+        grants = [grant for grant in grants if grant.get('scope') != 'any']
         if not self.policy_file.exists(): raise RuntimeError('Run setup.py update to install DNS policy support')
         previous = self.policy_file.read_bytes()
         lines, zones = [], set()

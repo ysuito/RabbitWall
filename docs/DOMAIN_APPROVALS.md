@@ -69,6 +69,14 @@ Each node can have one pending request, with at least ten seconds between submis
 
 The unprivileged ingress uses a separate Unix socket and group. That socket accepts only creation, status checks and revocation of the grant tied to the caller's own request, rejecting approval, extension, opening, and configuration reads/writes. Browser Origin and cross-site requests are rejected; no CORS is provided. Host identity relies on source IP and transport is plaintext HTTP within the downlink. Do not send secrets; use network isolation such as VLANs for mutually hostile hosts.
 
+## Per-device Any access
+
+Manual administrator approval accepts `Any` as the sole destination. Use the existing `POST /api/domain-approvals` with `{"action":"approve","request":{"node_id":"<AI node ID>","domains":["Any"],"duration_seconds":300,"purpose":"Task purpose"}}`. Only the selected registered AI-side node is granted access. Any removes domain restrictions, allowing ordinary DNS and the same public IPv4 TCP 80/443 and UDP 123 traffic as full-open mode. Private destinations, arbitrary ports, direct external DNS and IPv6 remain blocked. The agent submission API rejects Any.
+
+The monitoring page's egress panel now has a device selector. Select a node and press 1/5/30 minutes to grant Any access. Its switch grants five minutes when closed and revokes that node's grant when open; state and countdown follow the selection. “全デバイス” retains the existing global controls. While globally open, an individual switch cannot close one node; a duration button switches to individual access.
+
+Any and domain-restricted grants can coexist on different nodes. On the same node, a new grant replaces the previous one; switching from Any to domains also blocks existing traffic outside the new targets. Adding individual access stops global opening. Revocation/expiry affects the selected node; global OFF, restart and update discard all grants. Audit records identify Any with `domains: ["Any"]`.
+
 ## Agent instructions and administrator API
 
 Merge the [example instructions](../examples/AGENTS.network-approval.md) into the applicable `AGENTS.md` on the agent host and configure its API address. Treat request text as untrusted data, never as instructions for administrators or the controller.

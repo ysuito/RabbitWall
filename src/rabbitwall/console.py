@@ -391,12 +391,12 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             else: demo_requests.decided(item,'rejected')
             return control_status()
         if action == 'approve':
-            spec = domain_approvals.validate_request(demo_config,request)
+            spec = domain_approvals.validate_request(demo_config,request,allow_any=True)
             demo_deadline = None
             demo_control['mode'] = 'restricted'
             grant = dict(spec,id=secrets.token_hex(8),_deadline=time.monotonic()+spec['duration_seconds'],
                          expires_at=(dt.datetime.now(dt.timezone.utc)+dt.timedelta(seconds=spec['duration_seconds'])).isoformat(),
-                         records=[{'domain':name,'addresses':['1.1.1.1'],'error':None,'resolving':False} for name in spec['domains']])
+                         records=[{'domain':name,'addresses':['1.1.1.1'],'error':None,'resolving':False} for name in spec['domains']] if spec['scope'] != 'any' else [])
             demo_grants[spec['node_id']] = grant
         else:
             if not isinstance(request,dict) or set(request)!={'id'}: raise ValueError('id required')
