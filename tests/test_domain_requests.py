@@ -61,6 +61,8 @@ class Requests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 instance.agent_request('domain_request_status', {'source':'10.1.0.11','request':{'id':result['id']}})
             self.assertNotIn('_until', result)
+            with self.assertRaises(ValueError):
+                instance.agent_request('submit_domain_request', {'source':'10.1.0.10','request':dict(payload(),domains=['Any'])})
 
     def test_decision_starts_duration_at_approval_and_tracks_revoke(self):
         instance = self.controller()

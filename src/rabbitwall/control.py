@@ -127,7 +127,7 @@ def install_runtime():
 
 
 def apply_enabled(enabled, lease_ms=None):
-    script = "flush set inet rabbitwall_console online_sources\n" + "".join(f"flush set inet rabbitwall_console {name}\n" for name in ("domain_sources","domain_resolver_sources","domain_targets"))
+    script = "flush set inet rabbitwall_console online_sources\n" + "".join(f"flush set inet rabbitwall_console {name}\n" for name in ("domain_sources","domain_resolver_sources","domain_targets","device_sources"))
     if enabled:
         timeout = f"{LEASE}s" if lease_ms is None else f"{lease_ms}ms"
         script += f"add element inet rabbitwall_console online_sources {{ {AI_INTERFACE.network} timeout {timeout} }}\n"
@@ -252,7 +252,7 @@ class Controller:
         return current
 
     def approve_domains(self, payload):
-        spec = domain_approvals.validate_request(self.config,payload)
+        spec = domain_approvals.validate_request(self.config,payload,allow_any=True)
         self.desired = False
         self.deadline = None
         apply_enabled(False)
@@ -264,7 +264,7 @@ class Controller:
             raise
         self.error = None
         audit.record({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'source':spec['source'],'domains':spec['domains'],
-                          'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
+                          'scope':spec['scope'],'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
         return self.status()
 
     def agent_request(self, action, payload):

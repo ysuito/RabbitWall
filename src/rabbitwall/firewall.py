@@ -101,10 +101,12 @@ def gate(config):
         timeout {LEASE}s
     }}
     set domain_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
+    set device_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
     set domain_resolver_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
     set domain_targets {{ type ipv4_addr . ipv4_addr; flags timeout; timeout {LEASE}s; }}
     chain ai_egress {{
         ct original ip saddr @online_sources counter return
+        ct original ip saddr @device_sources counter return
         meta l4proto tcp ct original proto-dst {{ 80, 443 }} ct original ip saddr . ct original ip daddr @domain_targets counter return
         limit rate 5/second burst 10 packets log prefix "rabbitwall-forward-drop gate "
         counter drop
@@ -232,7 +234,7 @@ table ip rabbitwall_nat {{
 
 def domain_lease_rules(grants, now):
     """Renew per-source DNS and public IPv4 destinations without changing full-open leases."""
-    lines = [f'flush set inet rabbitwall_console {name}' for name in ('domain_sources','domain_resolver_sources','domain_targets')]
+    lines = [f'flush set inet rabbitwall_console {name}' for name in ('domain_sources','domain_resolver_sources','domain_targets','device_sources')]
     resolver_life = 0
     targets = {}
     for grant in grants:
@@ -241,6 +243,9 @@ def domain_lease_rules(grants, now):
         source = str(ipaddress.IPv4Address(grant['source']))
         resolver_life = max(resolver_life,life)
         lines.append(f'add element inet rabbitwall_console domain_sources {{ {source} timeout {max(1,int(life*1000))}ms }}')
+        if grant.get('scope') == 'any':
+            lines.append(f'add element inet rabbitwall_console device_sources {{ {source} timeout {max(1,int(life*1000))}ms }}')
+            continue
         for record in grant['records'].values():
             valid = min(life,record.get('until',0)-now)
             if valid <= 0: continue

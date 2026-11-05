@@ -284,3 +284,11 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 .audit-entry details{font-size:11px;color:var(--muted);margin-top:6px}.audit-entry pre{white-space:pre-wrap;max-height:300px;overflow:auto}
 .audit-failure{border-left:3px solid #d46a45;padding-left:12px}.audit-failure .audit-result,#audit-message[data-state="error"]{color:#df8058}
 @media(max-width:650px){.audit-toolbar{gap:8px}.audit-toolbar input[type="search"]{flex-basis:100%}.audit-primary{gap:4px 12px;font-size:13px}}
+
+.gate-target-label{display:block;margin:8px 12px 0;min-width:0}
+#gate-target{width:100%;min-width:0;max-width:100%;padding:6px 8px;font-size:13px;color:var(--gate-color);background:var(--gate-fill);border:1px solid var(--gate-border);text-overflow:ellipsis}
+#gate-panel .gate-current{min-height:64px;padding-block:8px}
+#gate-panel .domain-link{font-size:12px;padding-block:6px}
+#gate-panel #control-message{margin:4px 12px 8px;font-size:12px;line-height:1.5}
+.approval-domain-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.approval-domain-heading button{padding:4px 12px;font-size:13px}

@@ -108,6 +108,40 @@ for line in sys.stdin:
         client('ai','2.2.2.2',443,source='10.1.0.11',expected=False);dns_query('other.example','blocked',source='10.1.0.11')
         print('PASS: revoke blocks established TCP; kernel expiry closes DNS and web without another tick',flush=True)
         assert manager.snapshot()==[]
+        # Manual Any opens only one registered source, retaining baseline port/private-IP limits.
+        any_spec=validate_request(cfg,{'node_id':'ai-host','domains':['Any'],'duration_seconds':60,'purpose':'manual device access'},allow_any=True)
+        manager.approve(cfg,any_spec)
+        dns_query('allowed.example','NOERROR');dns_query('other.example','NOERROR')
+        dns_query('other.example','blocked',source='10.1.0.11')
+        client('ai','1.1.1.1',443);client('ai','2.2.2.2',443)
+        client('ai','2.2.2.2',443,source='10.1.0.11',expected=False)
+        client('ai','10.0.0.254',443,expected=False)
+        held_any=subprocess.Popen(['ip','netns','exec','ai',sys.executable,'-u','-c',held_code.replace('1.1.1.1','2.2.2.2')],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True);children.append(held_any)
+        assert held_any.stdout.readline().strip()=='ready'
+        manager.approve(cfg,second)
+        deadline=time.monotonic()+5
+        while not any(g['node_id']=='second' and any(r['addresses'] for r in g['records']) for g in manager.snapshot()):
+            manager.tick();assert time.monotonic()<deadline;time.sleep(.05)
+        dns_query('other.example','NOERROR');dns_query('allowed.example','NOERROR')
+        dns_query('other.example','NOERROR',source='10.1.0.11');dns_query('allowed.example','NXDOMAIN',source='10.1.0.11')
+        manager.approve(cfg,spec)
+        deadline=time.monotonic()+5
+        while not any(g['node_id']=='ai-host' and any(r['addresses'] for r in g['records']) for g in manager.snapshot()):
+            manager.tick();assert time.monotonic()<deadline;time.sleep(.05)
+        held_any.stdin.write('send\n');held_any.stdin.flush();assert held_any.stdout.readline().strip()=='blocked'
+        dns_query('other.example','NXDOMAIN');client('ai','2.2.2.2',443,expected=False)
+        client('ai','2.2.2.2',443,source='10.1.0.11')
+        manager.approve(cfg,any_spec)
+        manager.revoke(manager.grants['ai-host']['id'])
+        dns_query('other.example','blocked');client('ai','2.2.2.2',443,expected=False)
+        client('ai','2.2.2.2',443,source='10.1.0.11')
+        manager.approve(cfg,any_spec)
+        manager.grants['ai-host']['deadline']=time.monotonic()+.3;manager.tick();time.sleep(.5)
+        dns_query('other.example','blocked');client('ai','2.2.2.2',443,expected=False)
+        manager.approve(cfg,any_spec)
+        control.apply_enabled(False)
+        dns_query('other.example','blocked');client('ai','2.2.2.2',443,expected=False)
+        print('PASS: per-device Any DNS/web, mixed grants, downgrade closes held traffic, isolated revoke, kernel expiry and global OFF',flush=True)
         manager.clear(sync=True);control.apply_enabled(True)
         dns_query('other.example','NOERROR');client('ai','2.2.2.2',443)
         control.apply_enabled(False)
