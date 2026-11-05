@@ -292,3 +292,15 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 #gate-panel #control-message{margin:4px 12px 8px;font-size:12px;line-height:1.5}
 .approval-domain-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .approval-domain-heading button{padding:4px 12px;font-size:13px}
+
+/* Readable two-line cards adapt to the node panel, including stacked mobile layouts. */
+.node-panel{container-type:inline-size}
+#nodes.node-list{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:6px 16px;padding:10px 14px 12px;align-content:start}
+#nodes .node-row{min-width:0;gap:10px;padding:3px 0;border-bottom:1px solid var(--line)}
+#nodes .node-state{width:clamp(36px,4cqi,44px);height:clamp(38px,4.2cqi,46px);font-size:clamp(30px,3.5cqi,38px)}
+#nodes .node-row>div{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:2px 8px;flex:1}
+#nodes .node-row strong{grid-column:1;grid-row:1;min-width:0;margin:0;font-size:clamp(16px,1.8cqi,18px);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nodes .node-row small{grid-column:2;grid-row:1;margin:0;font-size:clamp(12px,1.3cqi,13px);line-height:1.4;white-space:nowrap}
+#nodes .node-row code{grid-column:1/-1;grid-row:2;font-size:clamp(14px,1.5cqi,15px);line-height:1.4}
+.node-panel>.section-title{padding:10px 12px 0}
+@media(min-width:1000px) and (min-height:600px){.workspace-mode #nodes.node-list{max-height:clamp(240px,30dvh,320px)}}
