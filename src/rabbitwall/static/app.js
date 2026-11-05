@@ -231,12 +231,12 @@ function renderControl() {
   $("gate-panel").dataset.state=state;
   $("gate-panel").setAttribute("aria-busy",String(controlBusy));
   $("gate-state").textContent = !known ? "不明" : selected.nodeId && selected.full ? "全体開放中" : restricted
-    ? selected.nodeId ? selected.grant.scope==="any" ? "Any許可" : "限定許可" : "個別許可" : selected.enabled ? "開放" : "閉塞";
+    ? selected.nodeId ? selected.grant.scope==="any" ? "全域許可" : "限定許可" : "個別許可" : selected.enabled ? "開放" : "閉塞";
   $("gate-state").className = "gate-state " + state;
   $("internet-toggle").disabled=controlBusy || !controlAuthorized || Boolean(selected.nodeId && (!known || selected.full));
   $("internet-toggle").setAttribute("aria-checked",String(Boolean(known && selected.enabled)));
   $("internet-toggle").setAttribute("aria-label",selected.nodeId ? "選択デバイスの対外接続" : "AIセグメントの対外接続");
-  $("internet-toggle").title=controlBusy ? "変更中…" : !controlAuthorized ? "証明書付きHTTPSで接続してください" : selected.nodeId && selected.full ? "全体開放中です。時間ボタンで個別許可に切り替えます" : selected.enabled ? "接続を閉じる" : selected.nodeId ? "このデバイスを5分間Anyで許可" : "接続を開く";
+  $("internet-toggle").title=controlBusy ? "変更中…" : !controlAuthorized ? "証明書付きHTTPSで接続してください" : selected.nodeId && selected.full ? "全体開放中です。時間ボタンで個別許可に切り替えます" : selected.enabled ? "接続を閉じる" : selected.nodeId ? "このデバイスを5分間全域許可" : "接続を開く";
   document.querySelectorAll("[data-duration]").forEach(button => { button.disabled=controlBusy || !controlAuthorized || Boolean(selected.nodeId && !known); });
   $("gate-target").disabled=controlBusy;
   renderGateTimer();
@@ -425,7 +425,7 @@ $("export").addEventListener("click", () => {
 });
 refresh();
 $("internet-toggle").addEventListener("click", () => changeGate(Boolean(control?.available && !control.error && !gateSelection().enabled)));
-$("gate-target").addEventListener("change",()=>{ $("control-message").textContent=gateSelection().nodeId ? gateSelection().full ? "時間を選ぶと全体開通を停止し、個別許可に切り替えます。" : "時間を選ぶと、このデバイスをAnyで許可します。" : ""; renderControl(); });
+$("gate-target").addEventListener("change",()=>{ $("control-message").textContent=gateSelection().nodeId ? gateSelection().full ? "時間を選ぶと全体開通を停止し、個別許可に切り替えます。" : "時間を選ぶと、このデバイスを全域許可します。" : ""; renderControl(); });
 $("view-map").addEventListener("click", () => setSessionView("map"));
 $("view-table").addEventListener("click", () => setSessionView("table"));
 $("atlas-pause").addEventListener("click", () => {
@@ -596,7 +596,7 @@ function renderApprovals(){
     const entry=document.createElement("article");entry.className="approval-entry grant-entry";
     const main=document.createElement("div");main.className="approval-main";
     main.append(connectionLog(grant));
-    const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent=grant.scope==="any" ? "Any：公開IPv4のHTTP／HTTPS・NTP" : "接続先の状態";detail.dataset.grantId=grant.id;detail.open=expanded.has(grant.id);detail.append(summary);
+    const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent=grant.scope==="any" ? "全域許可：公開IPv4のHTTP／HTTPS・NTP" : "接続先の状態";detail.dataset.grantId=grant.id;detail.open=expanded.has(grant.id);detail.append(summary);
     const records=document.createElement("ul");
     for(const record of grant.records || []){
       const line=document.createElement("li");line.textContent=record.domain+" → "+(record.addresses.length ? record.addresses.join(", ") : record.error || "DNSを確認中・通信は未許可");records.append(line);
@@ -638,7 +638,7 @@ async function changeGate(enabled,duration=300){
   if(controlBusy || !controlAuthorized || !control?.available || control.error)return;
   if(!enabled && selected.full)return;
   const ok=enabled ? await changeDomains("approve",{node_id:selected.nodeId,domains:["Any"],duration_seconds:duration,purpose:"手動：デバイスのインターネット接続"}) : selected.grant ? await changeDomains("revoke",{id:selected.grant.id}) : true;
-  $("control-message").textContent=ok ? (controlDemo ? "試験表示 · " : "")+(enabled ? "このデバイスをAnyで許可しました。" : "このデバイスの許可を取り消しました。") : $("approval-message").textContent;
+  $("control-message").textContent=ok ? (controlDemo ? "試験表示 · " : "")+(enabled ? "このデバイスを全域許可しました。" : "このデバイスの許可を取り消しました。") : $("approval-message").textContent;
 }
 $("approval-any").addEventListener("click",()=>{$("approval-domains").value="Any";});
 $("approval-form").addEventListener("submit",event=>{
