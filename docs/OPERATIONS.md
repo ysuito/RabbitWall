@@ -13,9 +13,11 @@ Sessions are collected about every five seconds; nodes are checked with Ping abo
 
 Node status labels are **正** (healthy), **断** (no Ping response), **不** (unable to check), and **古** (monitoring data is stale). A host configured not to respond to Ping can appear as **断** even while running.
 
-Use the mouse wheel over the map to zoom between 1× and 6× around the cursor. The LAN layout, labels and routes zoom together. Drag to pan; Initial view resets both zoom and position. Ctrl/Command wheel gestures remain available to the browser.
+The default view is a spherical globe with the LAN segment in a detached foreground panel. Auto-rotation takes approximately three minutes per revolution and has its own stop/resume control. Drag to turn the globe, Shift-drag to pan the scene, and use the wheel to zoom 1×–6× around the cursor. Initial view resets orientation, zoom and position. Switch to the previous flat map with “平 / 2Dへ”. Ctrl/Command wheel gestures remain available to the browser.
 
-External routes display domain labels inferred from observed DNS where space permits, avoiding the LAN inset, country names and other labels. At most 16 labels appear. Multiple candidates use representative names and an additional count; long names are shortened. Click a label to inspect the route's candidates. Placement adapts to zoom/pan while domain-label text stays the same size.
+Countries and routes on the far side become visible as the globe turns. The route list includes all destinations; selecting a country faces it toward the viewer and temporarily suspends rotation until selection is cleared. Traffic particles can be paused independently. Reduced-motion preferences start both animations paused. Rotation also stops in hidden tabs or when monitoring data is stale.
+
+External routes display domain labels inferred from observed DNS where space permits, avoiding the LAN inset, country names and other labels. At most 16 labels appear. Each label lists up to five candidates on separate lines, with an additional count for any remaining names; long names are shortened. Click a label to inspect the route's candidates. Placement adapts to zoom/pan while domain-label text stays the same size.
 
 ## Opening and closing Internet access
 

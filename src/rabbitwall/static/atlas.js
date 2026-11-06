@@ -1,5 +1,6 @@
 (function (root) {
   "use strict";
+  const SphereMap=root.SphereMap || (typeof require!=="undefined" ? require("./globe.js") : null);
   const COLORS = {HTTPS:"#54e0bd", HTTP:"#54e0bd", DNS:"#a89cef", SSH:"#ffa42a", OTHER:"#7fa4d8", DROP:"#ff483e"};
   function endpointNode(ip, country, countries) {
     if (country?.kind === "private" || /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) {
@@ -85,14 +86,14 @@
       const names=routeDomains(path.route);
       if(!names.length)continue;
       const maxWidth=Math.min(230,width-32);
-      let text=names.slice(0,2).join(" / ")+(names.length>2 ? " +"+(names.length-2) : "");
-      if(measureText(text)+16>maxWidth) {
-        const suffix=names.length>1 ? " +"+(names.length-1) : "";
-        let first=names[0];
-        while(first.length>1 && measureText(first+"…"+suffix)+16>maxWidth)first=first.slice(0,-1);
-        text=first+(first!==names[0] ? "…" : "")+suffix;
-      }
-      const labelWidth=measureText(text)+16;
+      const lines=names.slice(0,5).map((name,index)=>{
+        const suffix=index===4 && names.length>5 ? " +"+(names.length-5) : "";
+        let shortened=name;
+        while(shortened.length>1 && measureText(shortened+(shortened!==name ? "…" : "")+suffix)+16>maxWidth)shortened=shortened.slice(0,-1);
+        return shortened+(shortened!==name ? "…" : "")+suffix;
+      });
+      const text=lines.join("\n"),labelHeight=lines.length*18+6;
+      const labelWidth=Math.max(...lines.map(line=>measureText(line)))+16;
       if(labelWidth>maxWidth)continue;
       let placed=null;
       for(const t of [.62,.48,.76,.34,.86,.22]) {
@@ -101,9 +102,9 @@
         const dy=2*((1-t)*(path.b.y-path.a.y)+t*(path.c.y-path.b.y)),length=Math.hypot(dx,dy)||1;
         for(const offset of [-16,16,-32,32]) {
           const anchor={x:point.x*zoom,y:point.y*zoom};
-          const rect={x:anchor.x-dy/length*offset-labelWidth/2,y:anchor.y+dx/length*offset-12,width:labelWidth,height:24};
+          const rect={x:anchor.x-dy/length*offset-labelWidth/2,y:anchor.y+dx/length*offset-labelHeight/2,width:labelWidth,height:labelHeight};
           if(rect.x<8 || rect.y<8 || rect.x+rect.width>width-8 || rect.y+rect.height>height-8 || occupied.some(box=>intersects(rect,box,5)))continue;
-          placed={key:path.route.key,route:path.route,text,rect,anchor};break;
+          placed={key:path.route.key,route:path.route,text,lines,rect,anchor};break;
         }
         if(placed)break;
       }
@@ -145,6 +146,7 @@
       this.rows = []; this.model = groupFlows([], {}); this.kind = "flows";
       this.active = false; this.paused = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       this.initialPaused=this.paused;
+      this.globeMode=true;this.rotating=!this.paused;this.longitude=30;this.latitude=15;this.spherePolygons=[];
       this.offset={x:0,y:0};this.zoom=1;this.drag=null;this.panFrame=null;this.suppressClick=false;this.theme="green";
       this.stale = false; this.selected = null; this.animation = null; this.points = new Map(); this.paths = []; this.routeLabels=[];
       this.background = document.createElement("canvas");
@@ -160,6 +162,8 @@
         .then(world => {
           if (!Array.isArray(world.features) || !world.countries || typeof world.countries !== "object") throw new Error("invalid map data");
           this.world = world; this.update(this.rows, {kind:this.kind, stale:this.stale});
+          this.spherePolygons=world.features.map(feature=>feature.polygons.map(polygon=>polygon.map(ring=>ring.map(SphereMap.vector))));
+          this.paintBackground();this.draw(performance.now());
         })
         .catch(() => { this.mapError = true; this.paintSummary(); this.draw(performance.now()); });
     }
@@ -171,6 +175,7 @@
     resetPosition() {
       if(this.panFrame)cancelAnimationFrame(this.panFrame);
       this.panFrame=null;this.drag=null;this.offset={x:0,y:0};this.zoom=1;
+      this.longitude=30;this.latitude=15;
       this.canvas.classList.remove("dragging");this.layout();this.draw(performance.now());
     }
     wheelZoom(event) {
@@ -191,7 +196,8 @@
     startPan(event) {
       if(this.drag || event.isPrimary===false || event.button!==0)return;
       this.suppressClick=false;
-      this.drag={id:event.pointerId,x:event.clientX,y:event.clientY,origin:{...this.offset},moved:false};
+      this.drag={id:event.pointerId,x:event.clientX,y:event.clientY,origin:{...this.offset},moved:false,
+        rotate:Boolean(this.globeMode && !event.shiftKey),longitude:this.longitude,latitude:this.latitude};
       this.canvas.setPointerCapture(event.pointerId);
     }
     movePan(event) {
@@ -199,7 +205,11 @@
       const dx=event.clientX-this.drag.x,dy=event.clientY-this.drag.y;
       if(Math.hypot(dx,dy)>4)this.drag.moved=true;
       if(!this.drag.moved)return;
-      this.offset={x:this.drag.origin.x+dx/(this.zoom || 1),y:this.drag.origin.y+dy/(this.zoom || 1)};
+      if(this.drag.rotate) {
+        const radius=Math.max(40,this.sphereScene?.radius || 100)*(this.zoom || 1);
+        this.longitude=this.drag.longitude-dx/radius*70;
+        this.latitude=Math.max(-60,Math.min(60,this.drag.latitude+dy/radius*50));
+      } else this.offset={x:this.drag.origin.x+dx/(this.zoom || 1),y:this.drag.origin.y+dy/(this.zoom || 1)};
       this.canvas.classList.add("dragging");
       if(!this.panFrame)this.panFrame=requestAnimationFrame(()=>{this.panFrame=null;this.layout();this.draw(performance.now());});
     }
@@ -211,6 +221,9 @@
     }
     setActive(active) { this.active = active; if (active) this.resize(); this.schedule(); }
     setPaused(paused) { this.paused = paused; this.schedule(); }
+    setGlobeMode(enabled) { this.globeMode=enabled;this.layout();this.draw(performance.now());this.schedule(); }
+    setRotating(enabled) { this.rotating=enabled;this.schedule(); }
+    canSpin() { return Boolean(this.active && this.globeMode && this.rotating && !this.drag && !this.selected && !this.stale && (typeof document==="undefined" || !document.hidden)); }
     update(rows, options = {}) {
       this.network = options.network || this.network || {hosts:[],site_label:"LAN拠点",site_location:[139,36]};
       this.rows = rows; this.kind = options.kind || "flows"; this.stale = Boolean(options.stale);
@@ -252,8 +265,13 @@
       }
       if (!this.model.routes.length) { const empty=document.createElement("p"); empty.className="atlas-empty"; empty.textContent="該当するセッションはありません。"; this.list.append(empty); }
     }
-    select(key) { this.selected=toggledSelection(this.selected,key); this.paintList(); this.paintDetail(); this.layoutLabels(); this.draw(performance.now()); }
-    clearSelection() { this.selected=null;this.paintList();this.paintDetail();this.layoutLabels();this.draw(performance.now()); }
+    select(key) {
+      this.selected=toggledSelection(this.selected,key);
+      const route=this.model?.routes?.find(item=>item.key===this.selected),target=[route?.dst,route?.src].find(node=>node?.kind==="country");
+      if(this.globeMode && target){this.longitude=target.point[0];this.latitude=Math.max(-60,Math.min(60,target.point[1]));this.layout();}
+      this.paintList();this.paintDetail();this.layoutLabels();this.draw(performance.now());this.schedule();
+    }
+    clearSelection() { this.selected=null;this.paintList();this.paintDetail();this.layoutLabels();this.draw(performance.now());this.schedule(); }
     paintDetail() {
       this.detail.replaceChildren();
       const route = this.model.routes.find(item => item.key === this.selected);
@@ -301,13 +319,14 @@
       this.layout(); this.paintBackground(); this.draw(performance.now());
     }
     project(point) {
-      const p=projection(point,this.width,this.height);
-      return {x:p.x+this.offset.x,y:p.y+this.offset.y};
+      const p=this.globeMode ? SphereMap.project(point,this.sphereScene,SphereMap.camera(this.longitude,this.latitude)) : projection(point,this.width,this.height);
+      return {...p,x:p.x+this.offset.x,y:p.y+this.offset.y};
     }
     layout() {
       if (!this.width) return;
       this.points = new Map();
-      this.inset=pacificInset(this.width,this.height);
+      this.sphereScene=this.globeMode ? SphereMap.scene(this.width,this.height) : null;
+      this.inset=this.globeMode ? {...this.sphereScene.inset} : pacificInset(this.width,this.height);
       this.inset.x+=this.offset.x;this.inset.y+=this.offset.y;
       const configured=this.network?.hosts || [];
       const known=configured.slice(0,5);
@@ -315,16 +334,16 @@
       const remaining=[...new Set([...configured.slice(5).flatMap(host=>host.ips),...extras.map(node=>node.ip)])];
       const hosts=[...known];
       if(remaining.length)hosts.push({label:`他${remaining.length}端点`,glyph:"他",ip:"",ips:remaining});
-      if(hosts.length>4){
+      if(hosts.length>4 && !this.globeMode){
         this.inset.width=Math.min(400,this.width-28);
         this.inset.x=Math.min(this.inset.x,this.width-this.inset.width-14+this.offset.x);
       }
-      const columns=hosts.length===4 && this.inset.height<210 && this.inset.width>=328 ? 4 : hosts.length>4 ? 3 : 2;
+      const columns=this.globeMode ? hosts.length>4 ? 3 : 2 : hosts.length===4 && this.inset.height<210 && this.inset.width>=328 ? 4 : hosts.length>4 ? 3 : 2;
       this.hostColumns=columns;
       const rows=Math.ceil(hosts.length/columns);
       hosts.forEach((host,index)=>{
         const point={x:this.inset.x+this.inset.width*(index%columns+.5)/columns,
-          y:this.inset.y+(rows===1 ? (this.inset.height<160 ? 49 : (this.inset.height+30)/2) :
+          y:this.inset.y+(this.globeMode ? this.inset.height<180 ? 43+(this.inset.height-58)*Math.floor(index/columns)/rows : 32+(this.inset.height-52)*(Math.floor(index/columns)+.5)/rows : rows===1 ? (this.inset.height<160 ? 49 : (this.inset.height+30)/2) :
             72+(this.inset.height-136)*Math.floor(index/columns)/(rows-1)),
           node:{...host,kind:"local",observed:this.model.nodes.some(node=>host.ips.includes(node.ip))}};
         for(const ip of host.ips)this.points.set("local:"+ip,point);
@@ -339,7 +358,7 @@
         const a=this.points.get(route.src.key), c=this.points.get(route.dst.key), distance=Math.hypot(a.x-c.x,a.y-c.y);
         const local=route.src.kind === "local" && route.dst.kind === "local";
         const lift=local ? Math.min(38,12+distance*.08) : Math.min(160,55+Math.log10(Number(route.flows[0].dport)||1)*20);
-        return {route,a,c,b:{x:(a.x+c.x)/2, y:Math.max(17+this.offset.y,Math.min(a.y,c.y)-lift)}};
+        return {route,a,c,hidden:a.visible===false || c.visible===false,b:{x:(a.x+c.x)/2, y:Math.max((this.globeMode ? 88 : 17)+this.offset.y,Math.min(a.y,c.y)-lift)}};
       });
       this.layoutLabels();
       this.paintBackground();
@@ -350,20 +369,26 @@
       const obstacles=[{x:0,y:0,width:this.width,height:88}];
       if(this.inset)obstacles.push({x:this.inset.x*zoom,y:this.inset.y*zoom,width:this.inset.width*zoom,height:this.inset.height*zoom});
       ctx.save();ctx.font="13px -apple-system,sans-serif";
-      for(const point of new Set(this.points.values())) {
-        if(point.node.kind==="local")continue;
+      const selectedRoute=this.model.routes.find(route=>route.key===this.selected),focused=selectedRoute?.dst.key;
+      const countries=[...new Set(this.points.values())].sort((a,b)=>Number(b.node.key===focused)-Number(a.node.key===focused));
+      const countryBoxes=[];this.countryLabelKeys=new Set();
+      for(const point of countries) {
+        if(point.node.kind==="local" || point.visible===false)continue;
         const x=Math.max(65+this.offset.x,Math.min(this.width-65+this.offset.x,point.x))*zoom;
         const width=Math.max(24,ctx.measureText(point.node.label).width+12)*zoom;
-        obstacles.push({x:x-width/2,y:(point.y-31)*zoom,width,height:44*zoom});
+        const box={x:x-width/2,y:(point.y-31)*zoom,width,height:44*zoom};
+        if(this.globeMode && (box.y<88 || countryBoxes.some(other=>intersects(box,other,3))))continue;
+        this.countryLabelKeys.add(point.node.key);countryBoxes.push(box);obstacles.push(box);
       }
       const site=this.project(this.network?.site_location || [139,36]);
-      obstacles.push({x:site.x*zoom-5,y:site.y*zoom-24,width:(ctx.measureText(this.network?.site_label || "LAN拠点").width+24)*zoom,height:30*zoom});
+      if(site.visible!==false)obstacles.push({x:site.x*zoom-5,y:site.y*zoom-24,width:(ctx.measureText(this.network?.site_label || "LAN拠点").width+24)*zoom,height:30*zoom});
       ctx.font="12px ui-monospace,monospace";
-      this.routeLabels=placeRouteLabels(this.paths,{width:this.width,height:this.height,zoom,obstacles,selected:this.selected,measureText:text=>ctx.measureText(text).width});
+      this.routeLabels=placeRouteLabels(this.paths.filter(path=>!path.hidden),{width:this.width,height:this.height,zoom,obstacles,selected:this.selected,measureText:text=>ctx.measureText(text).width});
       ctx.restore();
     }
     paintBackground() {
       if (!this.width) return;
+      if(this.globeMode){this.paintGlobeBackground();return;}
       const ctx=this.background.getContext("2d"), w=this.width,h=this.height;
       ctx.setTransform(this.scale,0,0,this.scale,0,0); ctx.clearRect(0,0,w,h);
       const ocean=ctx.createRadialGradient(w*.55,h*.32,0,w*.55,h*.32,w*.7);
@@ -383,15 +408,60 @@
         }
         ctx.fillStyle=this.color("#102c27"); ctx.fill("evenodd"); ctx.strokeStyle=this.color("#356653");ctx.lineWidth=.7;ctx.stroke();
       }
+      this.paintInset(ctx);
+    }
+    paintInset(ctx) {
       const box=this.inset,site=this.project(this.network?.site_location || [139,36]);
-      ctx.strokeStyle=this.color("#df8a36");ctx.lineWidth=1;ctx.setLineDash([4,6]);ctx.beginPath();ctx.moveTo(site.x,site.y);ctx.lineTo(box.x,box.y+16);ctx.stroke();ctx.setLineDash([]);
-      {
+      if(site.visible!==false) {
         ctx.fillStyle=this.color("#fca132");ctx.beginPath();ctx.arc(site.x,site.y,3,0,Math.PI*2);ctx.fill();
         ctx.font="13px -apple-system,sans-serif";ctx.fillText(this.network?.site_label || "LAN拠点",site.x+9,site.y-8);
       }
-      ctx.save();ctx.globalAlpha=this.theme==="white" ? .82 : .68;ctx.fillStyle=this.color("#07110fef");ctx.fillRect(box.x,box.y,box.width,box.height);ctx.restore();ctx.strokeStyle=this.color("#e58b2e");ctx.strokeRect(box.x,box.y,box.width,box.height);
+      ctx.save();ctx.shadowColor=this.color("#63dfbb");ctx.shadowBlur=this.globeMode ? 16 : 0;
+      ctx.globalAlpha=this.globeMode ? .94 : this.theme==="white" ? .82 : .68;ctx.fillStyle=this.color("#07110fef");ctx.fillRect(box.x,box.y,box.width,box.height);ctx.restore();ctx.strokeStyle=this.color("#e58b2e");ctx.strokeRect(box.x,box.y,box.width,box.height);
       ctx.fillStyle=this.color("#ed9630");ctx.fillRect(box.x,box.y,box.width,30);ctx.fillStyle=this.color("#11100b");ctx.font="bold 14px -apple-system,sans-serif";ctx.fillText(this.network?.site_label || "LAN拠点",box.x+12,box.y+21);
-      ctx.fillStyle=this.color("#92a593");ctx.font="12px -apple-system,sans-serif";ctx.fillText("LANノードの配置図",box.x+12,box.y+box.height-7);
+      ctx.fillStyle=this.color("#92a593");ctx.font="12px -apple-system,sans-serif";ctx.fillText(this.globeMode ? "LANセグメント · 手前" : "LANノードの配置図",box.x+12,box.y+box.height-7);
+    }
+    paintGlobeBackground() {
+      const ctx=this.background.getContext("2d"),w=this.width,h=this.height;
+      ctx.setTransform(this.scale,0,0,this.scale,0,0);ctx.clearRect(0,0,w,h);
+      ctx.fillStyle=this.color("#030908");ctx.fillRect(0,0,w,h);
+      const viewScale=this.scale*(this.zoom || 1);ctx.setTransform(viewScale,0,0,viewScale,0,0);
+      const scene=this.sphereScene,cx=scene.x+this.offset.x,cy=scene.y+this.offset.y,r=scene.radius;
+      const view=SphereMap.camera(this.longitude,this.latitude);
+      ctx.save();ctx.strokeStyle=this.color("#1b3c37");ctx.lineWidth=1;ctx.setLineDash([2,7]);
+      ctx.beginPath();ctx.ellipse(cx,cy+r*.84,r*1.12,r*.16,0,0,Math.PI*2);ctx.stroke();ctx.restore();
+      const ocean=ctx.createRadialGradient(cx-r*.35,cy-r*.4,r*.08,cx,cy,r*1.05);
+      ocean.addColorStop(0,this.color("#0b2424"));ocean.addColorStop(1,this.color("#030908"));
+      ctx.save();ctx.shadowColor=this.color("#63dfbb");ctx.shadowBlur=22;ctx.fillStyle=ocean;
+      ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.fill();ctx.restore();
+      ctx.save();ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.clip();
+      ctx.fillStyle=this.color("#102c27");ctx.strokeStyle=this.color("#356653");ctx.lineWidth=.65;
+      for(const feature of this.spherePolygons || []) {
+        ctx.beginPath();
+        for(const polygon of feature)for(const ring of polygon) {
+          const points=SphereMap.clipRing(ring.map(v=>SphereMap.rotate(v,view)));
+          if(points.length<3)continue;
+          points.forEach((point,index)=>{const x=cx+r*point.x,y=cy-r*point.y;if(!index)ctx.moveTo(x,y);else ctx.lineTo(x,y);});ctx.closePath();
+        }
+        ctx.fill("evenodd");ctx.stroke();
+      }
+      ctx.save();ctx.globalAlpha=.45;ctx.strokeStyle=this.color("#356653");ctx.lineWidth=.55;
+      for(const line of SphereMap.grid) {
+        ctx.beginPath();let started=false;
+        for(const vertex of line) {
+          const point=SphereMap.rotate(vertex,view);
+          if(point.z<0){started=false;continue;}
+          if(!started)ctx.moveTo(cx+r*point.x,cy-r*point.y);else ctx.lineTo(cx+r*point.x,cy-r*point.y);
+          started=true;
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+      const shade=ctx.createLinearGradient(cx-r*.7,cy-r*.8,cx+r,cy+r*.8);
+      shade.addColorStop(0,"rgba(255,255,255,.1)");shade.addColorStop(.4,"rgba(0,0,0,0)");shade.addColorStop(1,"rgba(0,0,0,.65)");
+      ctx.fillStyle=shade;ctx.fillRect(cx-r,cy-r,r*2,r*2);ctx.restore();
+      ctx.strokeStyle=this.color("#53967a99");ctx.lineWidth=1.3;ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+      this.paintInset(ctx);
     }
     draw(now) {
       if (!this.width || !this.active) return;
@@ -399,6 +469,7 @@
       const viewScale=this.scale*(this.zoom || 1);ctx.setTransform(viewScale,0,0,viewScale,0,0);
       const moving=!this.paused && !this.stale && !document.hidden;
       for (const path of this.paths) {
+        if(path.hidden)continue;
         const {route,a,b,c}=path, highlighted=!this.selected || this.selected===route.key;
         ctx.globalAlpha=highlighted ? .78 : .12;ctx.strokeStyle=this.color(route.color);
         const visual=routeVisual(route,this.kind);
@@ -424,26 +495,27 @@
         ctx.strokeStyle=this.color(route.color);ctx.lineWidth=this.selected===route.key ? 1.2 : .7;
         ctx.beginPath();ctx.moveTo(anchor.x,anchor.y);ctx.lineTo(Math.max(rect.x,Math.min(rect.x+rect.width,anchor.x)),Math.max(rect.y,Math.min(rect.y+rect.height,anchor.y)));ctx.stroke();
         ctx.fillStyle=this.color("#07110fef");ctx.fillRect(rect.x,rect.y,rect.width,rect.height);ctx.strokeRect(rect.x,rect.y,rect.width,rect.height);
-        ctx.fillStyle=this.color(route.color);ctx.fillText(label.text,rect.x+8,rect.y+rect.height/2);
+        ctx.fillStyle=this.color(route.color);label.lines.forEach((line,index)=>ctx.fillText(line,rect.x+8,rect.y+12+index*18));
       }
       ctx.restore();
       for (const point of new Set(this.points.values())) {
+        if(point.visible===false)continue;
         const {node,x,y}=point;
         ctx.fillStyle=node.kind === "local" ? node.observed ? this.color("#ffb148") : this.color("#637b68") : node.kind === "unknown" ? this.color("#c5a671") : this.color("#63dfbb");
         const labelX=Math.max(65+this.offset.x,Math.min(this.width-65+this.offset.x,x));
         if(node.kind==="local"){
-          const compact=this.inset.height<160;
+          const compact=this.inset.height<(this.globeMode ? 180 : 160);
           ctx.textAlign="center";
           if(!compact){ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=1;ctx.strokeRect(x-11,y-11,22,22);ctx.font="bold 16px -apple-system,sans-serif";ctx.fillText(node.glyph,x,y+5);}
           ctx.fillStyle=this.color("#bddfcb");ctx.font="14px -apple-system,sans-serif";let label=node.label;
           const maxWidth=this.inset.width/this.hostColumns-14;
           while(label.length>1 && ctx.measureText(label).width>maxWidth)label=label.endsWith("…") ? label.slice(0,-2)+"…" : label.slice(0,-1)+"…";
           ctx.fillText(label,labelX,y+(compact ? 2 : -19));
-          ctx.font="13px ui-monospace,monospace";ctx.fillText(node.ip || "",labelX,y+(compact ? 20 : 23));
-          if(node.secondaryIP)ctx.fillText(node.secondaryIP,labelX,y+(compact ? 35 : 39));
+          ctx.font=(compact ? "11px" : "13px")+" ui-monospace,monospace";ctx.fillText(node.ip || "",labelX,y+(compact ? 18 : 23));
+          if(node.secondaryIP && !(compact && this.globeMode))ctx.fillText(node.secondaryIP,labelX,y+(compact ? 31 : 39));
         }else{
           ctx.shadowColor=ctx.fillStyle;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(x,y,3.4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
-          ctx.strokeStyle=this.color("#53967a99");ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.stroke();ctx.font="13px -apple-system,sans-serif";ctx.textAlign="center";ctx.fillStyle=this.color("#bddfcb");ctx.fillText(node.label,labelX,y-13);
+          ctx.strokeStyle=this.color("#53967a99");ctx.beginPath();ctx.arc(x,y,8,0,Math.PI*2);ctx.stroke();ctx.font="13px -apple-system,sans-serif";ctx.textAlign="center";ctx.fillStyle=this.color("#bddfcb");if(!this.globeMode || this.countryLabelKeys?.has(node.key))ctx.fillText(node.label,labelX,y-13);
         }
       }
       ctx.textAlign="left";
@@ -452,9 +524,15 @@
     schedule() {
       if (this.animation) cancelAnimationFrame(this.animation);
       this.animation=null;
-      if (!this.active || this.paused || this.stale || document.hidden || !this.model.routes.some(route => route.animate)) {this.draw(performance.now());return;}
+      if (!this.active || document.hidden || (!this.canSpin() && (this.paused || this.stale || !this.model.routes.some(route => route.animate)))) {this.draw(performance.now());return;}
       let last=0;
-      const frame=now => {if(now-last>=33){this.draw(now);last=now;}this.animation=requestAnimationFrame(frame);};
+      const frame=now => {
+        if(now-last>=50){
+          if(this.canSpin()) {this.longitude=SphereMap.advance(this.longitude,last ? now-last : 0);this.layout();}
+          this.draw(now);last=now;
+        }
+        this.animation=requestAnimationFrame(frame);
+      };
       this.animation=requestAnimationFrame(frame);
     }
     pick(event) {
@@ -464,7 +542,7 @@
       if(label){this.select(label.key);return;}
       const point={x:screen.x/zoom,y:screen.y/zoom};
       let selected=null,nearest=13/zoom;
-      for (const path of this.paths) for (let t=0;t<=1;t+=.025) {
+      for (const path of this.paths.filter(path=>!path.hidden)) for (let t=0;t<=1;t+=.025) {
         const p=quadratic(path.a,path.b,path.c,t),distance=Math.hypot(p.x-point.x,p.y-point.y);
         if(distance<nearest){nearest=distance;selected=path.route.key;}
       }

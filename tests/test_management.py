@@ -138,6 +138,7 @@ class HTTP(unittest.TestCase):
 
     def test_atlas_assets_are_served_locally(self):
         script = self.request("/atlas.js")
+        self.assertIn(b'200 OK', self.request('/globe.js'))
         self.assertIn(b"200 OK", script.split(b"\r\n\r\n",1)[0])
         self.assertIn(b"text/javascript", script)
         response = self.request("/world.json")

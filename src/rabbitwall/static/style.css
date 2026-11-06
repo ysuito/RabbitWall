@@ -304,3 +304,9 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 #nodes .node-row code{grid-column:1/-1;grid-row:2;font-size:clamp(14px,1.5cqi,15px);line-height:1.4}
 .node-panel>.section-title{padding:10px 12px 0}
 @media(min-width:1000px) and (min-height:600px){.workspace-mode #nodes.node-list{max-height:clamp(240px,30dvh,320px)}}
+
+/* Globe controls wrap within the map header on smaller displays. */
+.atlas-toolbar .map-actions{max-width:min(54%,460px);gap:5px}
+.atlas-toolbar>div:first-child{max-width:46%}
+.atlas-toolbar .map-actions .export{font-size:12px;padding:6px 8px;white-space:nowrap}
+@media(max-width:650px){.atlas-toolbar .map-actions{max-width:52%}.atlas-title small,#atlas-summary{font-size:11px}.atlas-toolbar .map-actions .export{font-size:11px;padding:5px 6px}}

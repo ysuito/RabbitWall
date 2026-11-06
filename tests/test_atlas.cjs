@@ -185,7 +185,14 @@ for(const label of labels){
   assert.ok(labels.filter(other=>other!==label).every(other=>!intersects(label.rect,other.rect)));
 }
 assert.ok(labels.find(label=>label.key==='long').text.includes('…'));
-assert.ok(labels.find(label=>label.key==='long').text.endsWith('+2'));
+assert.equal(labels.find(label=>label.key==='long').lines.length,3);
+assert.equal(labels.find(label=>label.key==='long').lines[1],'second.example');
+const fiveNames=Array.from({length:7},(_,index)=>`domain${index}.example`);
+const multiLabel=placeRouteLabels([labeledPath('multi',fiveNames)],{width:800,height:400})[0];
+assert.equal(multiLabel.lines.length,5);
+assert.deepEqual(multiLabel.lines.slice(0,4),fiveNames.slice(0,4));
+assert.equal(multiLabel.lines[4],'domain4.example +2');
+assert.equal(multiLabel.rect.height,96);
 assert.equal(placeRouteLabels(labeledPaths,{width:800,height:400,obstacles:[{x:0,y:0,width:800,height:400}]}).length,0);
 assert.equal(placeRouteLabels([labeledPath('none',[])],{width:800,height:400}).length,0);
 const local=labeledPath('local');local.route.dst.kind='local';
