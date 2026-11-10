@@ -148,6 +148,7 @@
       this.initialPaused=this.paused;
       this.globeMode=true;this.rotating=!this.paused;this.longitude=30;this.latitude=15;this.spherePolygons=[];
       this.offset={x:0,y:0};this.zoom=1;this.drag=null;this.panFrame=null;this.suppressClick=false;this.theme="green";
+      this.restoreGlobeView();
       this.stale = false; this.selected = null; this.animation = null; this.points = new Map(); this.paths = []; this.routeLabels=[];
       this.background = document.createElement("canvas");
       this.observer = new ResizeObserver(() => this.resize()); this.observer.observe(this.canvas.parentElement);
@@ -168,6 +169,24 @@
         .catch(() => { this.mapError = true; this.paintSummary(); this.draw(performance.now()); });
     }
     color(value) { return SessionAtlas.themes[this.theme]?.[value] || value; }
+    restoreGlobeView() {
+      try {
+        const view=JSON.parse(window.localStorage.getItem("rabbitwall-globe-view"));
+        if(!view || ![view.longitude,view.latitude,view.zoom,view.offset?.x,view.offset?.y].every(Number.isFinite))return;
+        if(Math.abs(view.latitude)>60 || view.zoom<1 || view.zoom>6)return;
+        this.longitude=wrapLongitude(view.longitude,0);
+        this.latitude=view.latitude;
+        this.zoom=view.zoom;
+        this.offset={x:view.offset.x,y:view.offset.y};
+      } catch (_) {}
+    }
+    saveGlobeView() {
+      if(!this.globeMode)return;
+      const {longitude,latitude,zoom,offset}=this;
+      try {
+        window.localStorage.setItem("rabbitwall-globe-view",JSON.stringify({longitude,latitude,zoom,offset}));
+      } catch (_) {}
+    }
     setTheme(name) {
       this.theme=Object.hasOwn(SessionAtlas.themes,name) ? name : "green";
       this.paintBackground();this.draw(performance.now());
@@ -176,6 +195,7 @@
       if(this.panFrame)cancelAnimationFrame(this.panFrame);
       this.panFrame=null;this.drag=null;this.offset={x:0,y:0};this.zoom=1;
       this.longitude=30;this.latitude=15;
+      this.saveGlobeView();
       this.canvas.classList.remove("dragging");this.layout();this.draw(performance.now());
     }
     wheelZoom(event) {
@@ -191,6 +211,7 @@
       const y=(event.clientY-rect.top)*this.height/rect.height;
       this.offset={x:this.offset.x+x/zoom-x/previous,y:this.offset.y+y/zoom-y/previous};
       this.zoom=zoom;
+      this.saveGlobeView();
       if(!this.panFrame)this.panFrame=requestAnimationFrame(()=>{this.panFrame=null;this.layout();this.draw(performance.now());});
     }
     startPan(event) {
@@ -216,6 +237,7 @@
     endPan(event) {
       if(!this.drag || event.pointerId!==this.drag.id)return;
       this.suppressClick=this.drag.moved;
+      if(this.drag.moved)this.saveGlobeView();
       this.drag=null;this.canvas.classList.remove("dragging");
       if(this.canvas.hasPointerCapture(event.pointerId))this.canvas.releasePointerCapture(event.pointerId);
     }
