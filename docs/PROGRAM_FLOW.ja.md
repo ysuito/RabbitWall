@@ -345,7 +345,7 @@ flowchart TB
     Worker --> Answers["公開IPv4 / 最短TTL / 名前ごとに最大8 IP"]
     Answers --> Tick["Approvals.tick() / 約0.5秒ごと"]
     Tick --> Lease["domain_lease_rules() / nft -f -"]
-    Lease --> Kernel["DNS許可元 + 送信元.宛先 TCP 80/443セット"]
+    Lease --> Kernel["DNS許可元 + 送信元・宛先・プロトコル・ポートのセット"]
     Grant --> End["期限切れ / 取消 / 閉 / リース消失"]
     End --> Close["遮断・許可破棄 / 自動復帰なし"]
 ```

@@ -34,6 +34,8 @@ function connectionLog(item, status="") {
   const fields=[
     ["src","Src",item.source+" ("+item.node_name+")"],
     ["dst","Dst",item.domains.join(", ")],
+    ["ports","Port",item.ports?.map(({protocol,port})=>protocol.toUpperCase()+" "+port).join(", ") ||
+      (item.scope==="any" ? "TCP 80, TCP 443, UDP 123" : "TCP 80, TCP 443")],
     ["duration","Duration",Number.isFinite(item.duration_seconds) ? (item.duration_seconds/60)+"分" : "—"]
   ];
   if(status)fields.push(["status","Status",status]);
@@ -653,11 +655,30 @@ async function changeGate(enabled,duration=300){
   const ok=enabled ? await changeDomains("approve",{node_id:selected.nodeId,domains:["Any"],duration_seconds:duration,purpose:"手動：デバイスのインターネット接続"}) : selected.grant ? await changeDomains("revoke",{id:selected.grant.id}) : true;
   $("control-message").textContent=ok ? (controlDemo ? "試験表示 · " : "")+(enabled ? "このデバイスを全域許可しました。" : "このデバイスの許可を取り消しました。") : $("approval-message").textContent;
 }
-$("approval-any").addEventListener("click",()=>{$("approval-domains").value="Any";});
+function syncApprovalPorts() {
+  $("approval-ports").disabled=$("approval-domains").value.trim().toLowerCase()==="any";
+}
+$("approval-domains").addEventListener("input",syncApprovalPorts);
+$("approval-any").addEventListener("click",()=>{
+  $("approval-domains").value="Any";
+  syncApprovalPorts();
+});
+syncApprovalPorts();
 $("approval-form").addEventListener("submit",event=>{
   event.preventDefault();
   const domains=$("approval-domains").value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);
-  changeDomains("approve",{node_id:$("approval-node").value,domains,duration_seconds:Number($("approval-duration").value),purpose:$("approval-purpose").value});
+  const request={node_id:$("approval-node").value,domains,duration_seconds:Number($("approval-duration").value),purpose:$("approval-purpose").value};
+  const portInput=$("approval-ports");
+  if(!portInput.disabled && portInput.value.trim()){
+    const pairs=portInput.value.trim().split(/\s*,\s*/).map(value=>/^(tcp|udp)\s*\/\s*(\d{1,5})$/i.exec(value));
+    if(pairs.some(pair=>!pair)){
+      $("approval-message").textContent="ポートは udp/123 の形式で入力してください。複数の場合はカンマで区切ります。";
+      portInput.focus();
+      return;
+    }
+    request.ports=pairs.map(([,protocol,port])=>({protocol:protocol.toLowerCase(),port:Number(port)}));
+  }
+  changeDomains("approve",request);
 });
 
 $("request-sound").addEventListener("click", async () => {

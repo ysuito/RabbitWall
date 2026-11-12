@@ -145,6 +145,6 @@ The root controller additionally runs these fixed commands from `unbound_guard.p
 | `unbound-control -c /etc/rabbitwall-unbound.conf reload` | Reload approved exact names, or remove restrictions before full-open |
 | `unbound-control -c /etc/rabbitwall-unbound.conf list_auth_zones` | Wait for asynchronous RPZ loading to complete |
 | `unbound-control -c /etc/rabbitwall-unbound.conf flush_zone .` | Clear cached responses after a policy change |
-| `nft -f -` | Refresh domain-source DNS leases and `(source IP, destination IP)` TCP 80/443 leases, roughly every 0.5 seconds while restricted |
+| `nft -f -` | Refresh domain-source DNS leases and `(source IP, destination IP, protocol, port)` leases, roughly every 0.5 seconds while restricted |
 
 Unbound control uses `/run/rabbitwall-dns/control.sock` (Unix socket, DNS group access), with no TCP control listener. The controller joins `rabbitwall-dns`. Approved-name resolution uses dnspython directly, not `dig`. Node saves cancel active domain grants and clear their DNS policy. See [domain approvals](DOMAIN_APPROVALS.md).

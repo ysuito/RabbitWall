@@ -32,7 +32,7 @@ class Requests:
         node = next((n for n in config['nodes'] if n['ip'] == source and n['interface'] == config['ai_if']), None)
         if node is None:
             raise ValueError('Source is not a registered downlink node')
-        if not isinstance(payload, dict) or set(payload) != {'domains', 'duration_seconds', 'purpose'}:
+        if not isinstance(payload, dict) or set(payload) - {'ports'} != {'domains', 'duration_seconds', 'purpose'}:
             raise ValueError('domains, duration_seconds and purpose are required')
         spec = validate_request(config, dict(payload, node_id=node['id']))
         if (len(self.items) >= MAX_REQUESTS or node['id'] in self.last_submit
@@ -52,7 +52,8 @@ class Requests:
         return self.items[identity]
 
     def validate_current(self, config, item):
-        spec = validate_request(config, {key:item[key] for key in ('node_id','domains','duration_seconds','purpose')})
+        fields = ('node_id', 'domains', 'duration_seconds', 'purpose', 'ports')
+        spec = validate_request(config, {key:item[key] for key in fields if key in item})
         if spec['source'] != item['source']:
             raise ValueError('Node address changed; submit a new request')
         if item['status'] != 'pending':

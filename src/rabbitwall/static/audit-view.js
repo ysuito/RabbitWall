@@ -79,6 +79,7 @@
         field("span",actorLabel(entry),"audit-actor");
         if(entry.source) field("span","Src: "+entry.source,"audit-source");
         if(entry.domains?.length) field("strong","Dst: "+entry.domains.join(", "),"audit-destination");
+        if(entry.ports?.length) field("span","Port: "+entry.ports.map(({protocol,port})=>protocol.toUpperCase()+" "+port).join(", "),"audit-ports");
         if(entry.duration_seconds) field("span","Duration: "+entry.duration_seconds+"s");
         const result=outcomes[entry.decision || entry.outcome] || reasons[entry.reason] || entry.error_type;
         if(result) field("span",result,"audit-result");

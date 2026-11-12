@@ -6,6 +6,11 @@ LEASE = 20
 PROBE_COMMENT = 'rabbitwall-health-probe'
 DNS_COMMENT = 'rabbitwall-local-dns'
 REQUEST_COMMENT = 'rabbitwall-domain-requests'
+DOMAIN_FORWARD_COMMENT = 'rabbitwall-domain-forward'
+DEFAULT_DOMAIN_PORTS = ({'protocol': 'tcp', 'port': 80}, {'protocol': 'tcp', 'port': 443})
+DOMAIN_TARGET_TYPE = 'ipv4_addr . ipv4_addr . inet_proto . inet_service'
+DOMAIN_TARGET_KEY = 'ct original ip saddr . ct original ip daddr . ct protocol . ct original proto-dst'
+DOMAIN_TARGET_TABLES = ('rabbitwall_console', 'rabbitwall_filter')
 BLOCKED = ('0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
            '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.168.0.0/16',
            '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4')
@@ -103,11 +108,11 @@ def gate(config):
     set domain_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
     set device_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
     set domain_resolver_sources {{ type ipv4_addr; flags timeout; timeout {LEASE}s; }}
-    set domain_targets {{ type ipv4_addr . ipv4_addr; flags timeout; timeout {LEASE}s; }}
+    set domain_targets {{ type {DOMAIN_TARGET_TYPE}; flags timeout; timeout {LEASE}s; }}
     chain ai_egress {{
-        ct original ip saddr @online_sources counter return
-        ct original ip saddr @device_sources counter return
-        meta l4proto tcp ct original proto-dst {{ 80, 443 }} ct original ip saddr . ct original ip daddr @domain_targets counter return
+        ct original ip saddr @online_sources ct protocol . ct original proto-dst {{ tcp . 80, tcp . 443, udp . 123 }} counter return
+        ct original ip saddr @device_sources ct protocol . ct original proto-dst {{ tcp . 80, tcp . 443, udp . 123 }} counter return
+        ct protocol {{ tcp, udp }} {DOMAIN_TARGET_KEY} @domain_targets counter return
         limit rate 5/second burst 10 packets log prefix "rabbitwall-forward-drop gate "
         counter drop
     }}
@@ -153,9 +158,24 @@ def gate(config):
 '''
 
 
+def domain_forward_rules(config, objects=()):
+    """Install the exact-match exception in the baseline forward chain."""
+    c = validate(config)
+    ai = ipaddress.IPv4Interface(c['ai_cidr'])
+    script = (f'add set inet rabbitwall_filter domain_targets '
+              f'{{ type {DOMAIN_TARGET_TYPE}; flags timeout; timeout {LEASE}s; }}\n'
+              'flush set inet rabbitwall_filter domain_targets\n')
+    if not any(item.get('rule', {}).get('comment') == DOMAIN_FORWARD_COMMENT for item in objects):
+        script += (f'insert rule inet rabbitwall_filter forward iifname "{c["ai_if"]}" oifname "{c["uplink_if"]}" '
+                   f'ip saddr {ai.network} ip daddr != @non_public_v4 ct state new ct direction original '
+                   f'meta l4proto {{ tcp, udp }} {DOMAIN_TARGET_KEY} @domain_targets counter accept '
+                   f'comment "{DOMAIN_FORWARD_COMMENT}"\n')
+    return script
+
+
 def persistent_rules(config):
     """Complete boot snippet. Keep request ingress when rewriting node settings."""
-    return gate(config) + probe_rules(config) + dns_rule(config) + request_rule(config)
+    return gate(config) + domain_forward_rules(config) + probe_rules(config) + dns_rule(config) + request_rule(config)
 
 
 def baseline(config):
@@ -234,7 +254,8 @@ table ip rabbitwall_nat {{
 
 def domain_lease_rules(grants, now):
     """Renew per-source DNS and public IPv4 destinations without changing full-open leases."""
-    lines = [f'flush set inet rabbitwall_console {name}' for name in ('domain_sources','domain_resolver_sources','domain_targets','device_sources')]
+    lines = [f'flush set inet rabbitwall_console {name}' for name in ('domain_sources','domain_resolver_sources','device_sources')]
+    lines.extend(f'flush set inet {table} domain_targets' for table in DOMAIN_TARGET_TABLES)
     resolver_life = 0
     targets = {}
     for grant in grants:
@@ -252,10 +273,14 @@ def domain_lease_rules(grants, now):
             for address in record.get('addresses',[]):
                 ip = ipaddress.IPv4Address(address)
                 if not ip.is_global: continue
-                targets[(source,str(ip))] = max(valid,targets.get((source,str(ip)),0))
+                for endpoint in grant.get('ports', DEFAULT_DOMAIN_PORTS):
+                    key = (source, str(ip), endpoint['protocol'], endpoint['port'])
+                    targets[key] = max(valid, targets.get(key, 0))
     if resolver_life:
         from settings import AI_IP
         lines.append(f'add element inet rabbitwall_console domain_resolver_sources {{ {AI_IP} timeout {max(1,int(resolver_life*1000))}ms }}')
-    for (source,address),life in sorted(targets.items()):
-        lines.append(f'add element inet rabbitwall_console domain_targets {{ {source} . {address} timeout {max(1,int(life*1000))}ms }}')
+    for (source, address, protocol, port), life in sorted(targets.items()):
+        for table in DOMAIN_TARGET_TABLES:
+            lines.append(f'add element inet {table} domain_targets '
+                         f'{{ {source} . {address} . {protocol} . {port} timeout {max(1,int(life*1000))}ms }}')
     return '\n'.join(lines)+'\n'

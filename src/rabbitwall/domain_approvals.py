@@ -8,16 +8,17 @@ import threading
 import time
 import audit
 
-from firewall import LEASE, domain_lease_rules
+from firewall import DEFAULT_DOMAIN_PORTS, LEASE, domain_lease_rules
 from unbound_guard import DNSGuard
 
 DURATIONS = (60, 300, 1800)
 MAX_DOMAINS = 32
+MAX_PORTS = 8
 
 
 def log_end(grant, reason):
     audit.record({'event':'domain-ended', 'reason':reason,
-                  **{key:grant[key] for key in ('id','node_id','source','domains','purpose','duration_seconds','expires_at') if key in grant}})
+                  **{key:grant[key] for key in ('id','node_id','source','domains','ports','purpose','duration_seconds','expires_at') if key in grant}})
 
 
 def parse_domains(values):
@@ -38,8 +39,25 @@ def parse_domains(values):
     return result
 
 
+def parse_ports(values):
+    if not isinstance(values, (list, tuple)) or not 1 <= len(values) <= MAX_PORTS:
+        raise ValueError('Specify 1–8 protocol and port pairs')
+    result = []
+    for entry in values:
+        if not isinstance(entry, dict) or set(entry) != {'protocol', 'port'}:
+            raise ValueError('Each port requires protocol and port')
+        protocol, port = entry['protocol'], entry['port']
+        if protocol not in ('tcp', 'udp') or type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError('Specify tcp or udp and a port from 1 to 65535')
+        if port == 53:
+            raise ValueError('Use the RabbitWall DNS resolver for port 53')
+        if entry not in result:
+            result.append({'protocol': protocol, 'port': port})
+    return result
+
+
 def validate_request(config, payload, allow_any=False):
-    if not isinstance(payload, dict) or set(payload) != {'node_id','domains','duration_seconds','purpose'}:
+    if not isinstance(payload, dict) or set(payload) - {'ports'} != {'node_id','domains','duration_seconds','purpose'}:
         raise ValueError('node_id, domains, duration_seconds and purpose are required')
     node = next((node for node in config['nodes'] if node['id'] == payload['node_id'] and node['interface'] == config['ai_if']), None)
     if node is None: raise ValueError('Select a registered AI-side node')
@@ -53,10 +71,14 @@ def validate_request(config, payload, allow_any=False):
     any_target = (isinstance(names, list) and len(names) == 1 and isinstance(names[0], str)
                   and names[0].strip().lower() == 'any')
     if any_target and not allow_any: raise ValueError('Any requires manual administrator approval')
+    if any_target and 'ports' in payload: raise ValueError('Custom ports require exact domain names')
+    ports = parse_ports(payload.get('ports', DEFAULT_DOMAIN_PORTS))
+    if any_target:
+        ports.append({'protocol': 'udp', 'port': 123})
     return {'node_id':node['id'], 'node_name':node['label'], 'source':node['ip'],
             'domains':['Any'] if any_target else parse_domains(names),
             'scope':'any' if any_target else 'domains',
-            'duration_seconds':duration, 'purpose':purpose.strip()}
+            'duration_seconds':duration, 'purpose':purpose.strip(), 'ports':ports}
 
 
 def resolve_domains(config, domains, deadline, cancel):
@@ -178,5 +200,6 @@ class Approvals:
                 records.append({'domain':name, 'addresses':record.get('addresses',[]) if record.get('until',0)>now else [],
                                 'error':record.get('error'), 'resolving':not bool(record)})
             result.append({key:grant[key] for key in ('id','node_id','node_name','source','domains','purpose','duration_seconds','expires_at')} |
-                          {'scope':grant.get('scope','domains'), 'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
+                          {'scope':grant.get('scope','domains'), 'ports':grant.get('ports', DEFAULT_DOMAIN_PORTS),
+                           'remaining_seconds':max(0,grant['deadline']-now), 'records':records})
         return result

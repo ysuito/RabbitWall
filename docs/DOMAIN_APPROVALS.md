@@ -4,13 +4,13 @@
 
 RabbitWall offers a separate restricted mode for human-approved network access. A human opens **許 / Temporary approvals** through the management PC's mTLS console, selects an AI-side node, pastes exact domains (one per line), supplies a purpose and chooses 1, 5 or 30 minutes. **Approve and open restricted access** replaces that node's previous grant and closes any full-open access. Other active node grants are retained. DNS-policy changes briefly close external access while Unbound reloads.
 
-Each node has at most one grant containing up to 32 domains. Subdomains and HTTP redirect destinations need their own explicit approval. URLs, literal IPs, ports and wildcards are rejected. Names are normalized to lower-case IDNA ASCII. The normal toggle and time buttons still open the whole AI subnet; switching from restricted mode to full-open requires confirmation in the console.
+Each node has at most one grant containing up to 32 domains. Subdomains and HTTP redirect destinations need their own approval. Enter exact names in the domain field and protocol/port pairs such as `udp/123` in the port field. Separate multiple pairs with commas. Up to eight TCP or UDP ports apply to all domains in the grant. Leaving the field blank uses TCP 80 and 443. Use the RabbitWall resolver for DNS.
 
 ## Enforcement
 
 - Unbound uses exact-QNAME response policy zones (RPZ), with per-client tags. Only the selected client's approved names are allowed, including over UDP and TCP. Parent and descendant names remain denied unless explicitly listed. Cached answers do not bypass the policy.
 - A separate controller worker resolves the approved names' public IPv4 A answers through `dns_upstream`, using the host's uplink address. DNS search paths and arbitrary user-provided DNS servers are never used. CNAME chains are handled by dnspython; the shortest answer TTL bounds address permissions. Up to eight public addresses per name are retained.
-- nftables permits only TCP 80/443 for approved `(source IP, destination IP)` pairs. All other AI Internet traffic, including UDP 123 in restricted mode, stays closed. Direct external DNS remains blocked. Normal registered management SSH/HTTPS/Ping and host update traffic keep their existing rules.
+- nftables permits only approved combinations of source IPv4, destination IPv4, transport protocol and destination port. Direct external DNS stays blocked.
 - The kernel lease is at most 20 seconds, and never intentionally exceeds the DNS TTL or approval deadline. Missing/zero-TTL/private answers do not grant access. DNS resolution is refreshed while approval is active; expired or failed answers cannot renew address permissions.
 - Revoke, expiry and global OFF block existing external connections as well. Restart, update, network reconfiguration, node-setting saves or a lost kernel lease discard grants. No automatic resumption occurs. DNS-control or firewall failures close access.
 
@@ -47,6 +47,8 @@ curl --noproxy '*' --fail-with-body --max-time 10 \
 ```
 
 HTTP 201 returns `{"request":{"id":"...","status":"pending", ...}}`. The source IPv4 identifies a registered AI-side node. The body cannot specify node identity, source or DNS server. Unregistered sources are rejected. Requests accept up to 32 exact domains, a purpose of up to 200 characters, and 60, 300 or 1800 seconds. URLs, IP literals and wildcards are rejected. Submission does not grant access.
+
+For NTP, send the NTP server's exact domain in `domains` and include `"ports":[{"protocol":"udp","port":123}]`. Omitting `ports` requests TCP 80 and 443.
 
 ```sh
 curl --noproxy '*' --fail-with-body --max-time 10 \

@@ -252,6 +252,8 @@ th{font-size:12px;letter-spacing:.5px}td,td.mono,.country{font-size:13px}
 .connection-log{display:grid;gap:4px;color:var(--ink);min-width:0}
 .log-primary{display:flex;align-items:baseline;flex-wrap:wrap;gap:5px 20px;font:400 17px/1.6 ui-monospace,monospace}
 .log-field{display:inline-flex;align-items:baseline;gap:5px;min-width:0;max-width:100%}
+#approval-ports{background:var(--bg);color:var(--ink);border:1px solid var(--line);padding:10px;font:14px ui-monospace,monospace;min-width:0}
+#approval-form label:has(> #approval-ports){margin-top:12px}
 .log-key{flex:none;color:inherit;font-weight:inherit}
 .log-value{min-width:0;overflow-wrap:anywhere}
 .log-time{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}

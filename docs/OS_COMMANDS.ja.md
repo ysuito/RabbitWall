@@ -145,6 +145,6 @@ root制御プロセスが `unbound_guard.py` から以下の固定コマンド�
 | `unbound-control -c /etc/rabbitwall-unbound.conf reload` | 承認した完全一致の名前を反映、または全体開通前に制限を解除 |
 | `unbound-control -c /etc/rabbitwall-unbound.conf list_auth_zones` | 非同期RPZ読み込みの完了を確認 |
 | `unbound-control -c /etc/rabbitwall-unbound.conf flush_zone .` | ポリシー変更後にキャッシュを消去 |
-| `nft -f -` | 限定許可中は約0.5秒ごとにDNS許可元と送信元IP・宛先IPのTCP 80/443許可期限を更新 |
+| `nft -f -` | 限定許可中は約0.5秒ごとにDNS許可元と送信元IP・宛先IP・プロトコル・ポートの許可期限を更新 |
 
 Unbound制御は `/run/rabbitwall-dns/control.sock`（DNSグループのUnixソケット）を使い、TCP制御ポートは開きません。制御プロセスは `rabbitwall-dns` グループに参加します。承認名の解決はdnspythonから直接行い、`dig` は起動しません。ノード保存時は限定許可を破棄してDNSポリシーを解除します。[一時許可の手順](DOMAIN_APPROVALS.ja.md)も参照してください。

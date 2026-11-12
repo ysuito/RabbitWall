@@ -80,9 +80,9 @@ def main():
     ip("route", "add", "default", "via", "10.2.0.1")
     for address in ("1.1.1.1/32", "10.0.0.9/32", "10.0.0.254/32"):
         ip("-n", "upstream", "addr", "add", address, "dev", "lo")
-    from firewall import baseline, gate, dns_rule, probe_rules
+    from firewall import baseline, persistent_rules
     from settings import SETTINGS
-    script=baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"', gate(SETTINGS)+dns_rule(SETTINGS)+probe_rules(SETTINGS))
+    script=baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"', persistent_rules(SETTINGS))
     control.nft(['-f','-'],script)
     controller = control.Controller()
     from dns_drops import Observer

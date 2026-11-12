@@ -20,7 +20,7 @@ import dns.message
 import dns.rrset
 import control
 from dns_observations import OBSERVATIONS, domain_hints, load_observations
-from firewall import baseline, gate, dns_rule, probe_rules
+from firewall import baseline, persistent_rules
 from settings import SETTINGS
 from unbound_config import render, check_config, require_unbound
 
@@ -132,7 +132,7 @@ def main():
         run('ip','-n','upstream','addr','add','10.0.0.254/32','dev','lo')
         run('ip','-n','upstream','route','add','10.1.0.0/24','via','10.2.0.2')
         run('ip','route','add','10.0.0.254/32','via','10.2.0.1')
-        script=baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"',gate(SETTINGS)+dns_rule(SETTINGS)+probe_rules(SETTINGS))
+        script=baseline(SETTINGS).replace('include "/etc/nftables.d/rabbitwall.nft"',persistent_rules(SETTINGS))
         control.nft(['-f','-'],script)
         controller=control.Controller()
         def client(name='cache.example',tcp=False,expect='ok',count=1,source='10.1.0.10'):

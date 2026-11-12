@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'src/rabbitwall'))
 from linux_gate_smoke import ip,run,client,SERVER
 import control
-from firewall import baseline,gate,dns_rule,probe_rules
+from firewall import baseline,persistent_rules
 from settings import SETTINGS
 from unbound_config import render,CONFIG_PATH,POLICY_FILE
 from domain_approvals import Approvals,validate_request
@@ -53,14 +53,14 @@ def main():
     for address in ['1.1.1.1/32','2.2.2.2/32','10.0.0.254/32']:ip('-n','upstream','addr','add',address,'dev','lo')
     cfg=copy.deepcopy(SETTINGS)
     cfg['nodes'].append({'id':'second','label':'Second','ip':'10.1.0.11','interface':'eth1','monitor':False,'allow_ssh':False,'allow_https':False,'allow_ping':False})
-    control.nft(['-f','-'],baseline(cfg).replace('include "/etc/nftables.d/rabbitwall.nft"',gate(cfg)+dns_rule(cfg)+probe_rules(cfg)))
+    control.nft(['-f','-'],baseline(cfg).replace('include "/etc/nftables.d/rabbitwall.nft"',persistent_rules(cfg)))
     POLICY_FILE.parent.mkdir(parents=True,exist_ok=True);POLICY_FILE.write_text('');POLICY_FILE.chmod(0o644)
     Path('/run/rabbitwall-dns').mkdir(exist_ok=True)
     CONFIG_PATH.write_text(render(cfg));CONFIG_PATH.chmod(0o644)
     children=[];manager=Approvals(control.nft)
     try:
         for args in [ ['ip','netns','exec','upstream',sys.executable,'-u','-c',DNS_SERVER],
-                      ['ip','netns','exec','upstream',sys.executable,'-u','-c',SERVER,'80,443','none','10.0.0.254'] ]:
+                      ['ip','netns','exec','upstream',sys.executable,'-u','-c',SERVER,'80,123,443,8443','123','1.1.1.1'] ]:
             process=subprocess.Popen(args,stdout=subprocess.PIPE,text=True);children.append(process);assert process.stdout.readline().strip()=='ready'
         unbound=subprocess.Popen(['unbound','-d','-c',str(CONFIG_PATH)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True);children.append(unbound)
         deadline=time.monotonic()+5
@@ -146,6 +146,27 @@ for line in sys.stdin:
         dns_query('other.example','NOERROR');client('ai','2.2.2.2',443)
         control.apply_enabled(False)
         print('PASS: explicit full-open mode and global OFF remain available',flush=True)
+        custom = validate_request(cfg, dict(
+            node_id='ai-host', domains=['allowed.example'], duration_seconds=60,
+            purpose='Test custom ports',
+            ports=[{'protocol':'udp','port':123}, {'protocol':'tcp','port':8443}],
+        ))
+        manager.approve(cfg, custom)
+        deadline = time.monotonic() + 5
+        while not manager.snapshot()[0]['records'][0]['addresses']:
+            manager.tick()
+            assert time.monotonic() < deadline
+            time.sleep(.05)
+        client('ai', '1.1.1.1', 123, udp=True)
+        client('ai', '1.1.1.1', 8443)
+        client('ai', '1.1.1.1', 123, expected=False)
+        client('ai', '1.1.1.1', 443, expected=False)
+        client('ai', '2.2.2.2', 8443, expected=False)
+        client('ai', '1.1.1.1', 123, udp=True, source='10.1.0.11', expected=False)
+        manager.revoke(manager.snapshot()[0]['id'])
+        client('ai', '1.1.1.1', 123, udp=True, expected=False)
+        client('ai', '1.1.1.1', 8443, expected=False)
+        print('PASS: UDP NTP and custom TCP ports are scoped by protocol, destination, source and grant', flush=True)
     finally:
         manager.close();control.apply_enabled(False)
         for process in children:process.terminate()

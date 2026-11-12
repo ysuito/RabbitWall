@@ -386,7 +386,7 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
             if item['status'] != 'pending': raise ValueError('Request already decided')
             if action == 'approve_request':
                 spec = demo_requests.validate_current(demo_config,item)
-                change_domains('approve',{k:spec[k] for k in ('node_id','domains','duration_seconds','purpose')})
+                change_domains('approve',{k:spec[k] for k in ('node_id','domains','duration_seconds','purpose','ports')})
                 demo_requests.decided(item,'approved',demo_grants[item['node_id']]['id'])
             else: demo_requests.decided(item,'rejected')
             return control_status()

@@ -67,12 +67,14 @@ class Requests(unittest.TestCase):
     def test_decision_starts_duration_at_approval_and_tracks_revoke(self):
         instance = self.controller()
         grants = []
+        ports = [{'protocol': 'udp', 'port': 123}]
         def approve(spec):
             self.assertEqual(spec['duration_seconds'],60)
+            self.assertEqual(spec['ports'], ports)
             instance.approvals.grants['ai-host']={'id':'grant'}
             grants.append({'id':'grant','remaining_seconds':60})
         with patch.object(domain_requests.time,'monotonic',return_value=100) as now, patch.object(instance,'status',side_effect=lambda:{'domain_approvals':list(grants)}), patch.object(instance,'approve_domains',side_effect=approve) as change:
-            result=instance.agent_request('submit_domain_request',{'source':'10.1.0.10','request':payload()})
+            result=instance.agent_request('submit_domain_request',{'source':'10.1.0.10','request':payload(ports=ports)})
             now.return_value=200
             status=instance.decide_domain_request({'id':result['id'],'decision':'approve'})
             change.assert_called_once()
@@ -105,7 +107,7 @@ class Requests(unittest.TestCase):
             instance.approvals.tick()
             grant=instance.approvals.grants['ai-host']
             self.assertEqual(grant['deadline'],260)
-            self.assertIn('10.1.0.10 . 1.1.1.1 timeout 20000ms',instance.approvals.nft.call_args[0][1])
+            self.assertIn('10.1.0.10 . 1.1.1.1 . tcp . 443 timeout 20000ms',instance.approvals.nft.call_args[0][1])
             now.return_value=259
             instance.approvals.tick()
             self.assertIn('timeout 1000ms',instance.approvals.nft.call_args[0][1])

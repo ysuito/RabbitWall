@@ -345,7 +345,7 @@ flowchart TB
     Worker --> Answers["Public IPv4 / shortest answer TTL / max 8 per name"]
     Answers --> Tick["Approvals.tick() / about 0.5 seconds"]
     Tick --> Lease["domain_lease_rules() / nft -f -"]
-    Lease --> Kernel["DNS source sets + source.destination TCP 80/443 set"]
+    Lease --> Kernel["DNS source sets + source, destination, protocol and port sets"]
     Grant --> End["Expiry / revoke / OFF / lost lease"]
     End --> Close["Remove access / discard grants; no automatic resume"]
 ```

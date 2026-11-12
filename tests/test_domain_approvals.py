@@ -50,6 +50,17 @@ class DomainApprovals(unittest.TestCase):
         self.assertIn('github.com CNAME rpz-passthru.',zone)
         self.assertIn('api.github.com CNAME rpz-passthru.',zone)
 
+    def test_custom_ports_are_exact_and_external_dns_is_reserved(self):
+        ntp = {'protocol': 'udp', 'port': 123}
+        self.assertEqual(domains.validate_request(SETTINGS, payload(ports=[ntp, ntp]))['ports'], [ntp])
+        for ports in [[], None, [ntp]*9, [{'protocol':'icmp','port':123}],
+                      [{'protocol':'tcp','port':True}], [{'protocol':'udp','port':65536}],
+                      [{'protocol':'udp','port':53}], [{'protocol':'tcp','port':53}]]:
+            with self.subTest(ports=ports), self.assertRaises(ValueError):
+                domains.validate_request(SETTINGS, payload(ports=ports))
+        with self.assertRaises(ValueError):
+            domains.validate_request(SETTINGS, payload(domains=['Any'], ports=[ntp]), allow_any=True)
+
     def test_any_is_manual_only_and_cannot_mix_with_domains(self):
         for name in ['Any','any',' ANY ']:
             spec=payload(domains=[name])
@@ -94,7 +105,7 @@ class DomainApprovals(unittest.TestCase):
             self.assertEqual(manager.snapshot()[0]['records'][0]['addresses'],['1.1.1.1'])
             self.assertEqual(manager.snapshot()[0]['duration_seconds'],60)
             script=nft.call_args[0][1]
-            self.assertIn('10.1.0.10 . 1.1.1.1 timeout 10000ms',script)
+            self.assertIn('10.1.0.10 . 1.1.1.1 . tcp . 443 timeout 10000ms',script)
             self.assertNotIn('online_sources',script)
             now.return_value=111
             self.assertEqual(manager.snapshot()[0]['records'][0]['addresses'],[])
@@ -111,7 +122,7 @@ class DomainApprovals(unittest.TestCase):
         record={'source':'10.1.0.10','deadline':105,'records':{'x':{'addresses':['1.1.1.1','10.0.0.254'],'until':103}}}
         text=domain_lease_rules([record],100)
         self.assertIn('10.1.0.10 timeout 5000ms',text)
-        self.assertIn('10.1.0.10 . 1.1.1.1 timeout 3000ms',text)
+        self.assertIn('10.1.0.10 . 1.1.1.1 . tcp . 80 timeout 3000ms',text)
         self.assertNotIn('10.0.0.254',text)
         self.assertNotIn('add element',domain_lease_rules([record],106))
 

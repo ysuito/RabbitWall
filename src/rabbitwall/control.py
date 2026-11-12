@@ -29,6 +29,7 @@ SOCKET = Path("/run/rabbitwall/control.sock")
 TOKEN = Path("/etc/rabbitwall/control.token")
 GROUP = "rabbitwall-control"
 from firewall import LEASE, PROBE_COMMENT, DNS_COMMENT, REQUEST_COMMENT, request_rule, persistent_rules, gate, dns_rule, probe_rules
+from firewall import DOMAIN_TARGET_TABLES, domain_forward_rules
 
 GATE_RULES = gate(SETTINGS)
 DNS_RULE = dns_rule(SETTINGS)
@@ -116,6 +117,7 @@ def install_runtime():
     exists = any(item.get("table", {}).get("name") == "rabbitwall_console" and
                  item["table"].get("family") == "inet" for item in objects)
     script = ("delete table inet rabbitwall_console\n" if exists else "") + GATE_RULES
+    script += domain_forward_rules(SETTINGS, objects)
     script += node_config.node_rule_batch(SETTINGS, objects)
     if not any(item.get("rule", {}).get("comment") == DNS_COMMENT for item in objects):
         script += DNS_RULE
@@ -127,7 +129,8 @@ def install_runtime():
 
 
 def apply_enabled(enabled, lease_ms=None):
-    script = "flush set inet rabbitwall_console online_sources\n" + "".join(f"flush set inet rabbitwall_console {name}\n" for name in ("domain_sources","domain_resolver_sources","domain_targets","device_sources"))
+    script = "".join(f"flush set inet rabbitwall_console {name}\n" for name in ("online_sources","domain_sources","domain_resolver_sources","device_sources"))
+    script += "".join(f"flush set inet {table} domain_targets\n" for table in DOMAIN_TARGET_TABLES)
     if enabled:
         timeout = f"{LEASE}s" if lease_ms is None else f"{lease_ms}ms"
         script += f"add element inet rabbitwall_console online_sources {{ {AI_INTERFACE.network} timeout {timeout} }}\n"
@@ -264,7 +267,7 @@ class Controller:
             raise
         self.error = None
         audit.record({'event':'domain-approval','at':utc_now(),'id':self.approvals.grants[spec['node_id']]['id'],'node_id':spec['node_id'],'source':spec['source'],'domains':spec['domains'],
-                          'scope':spec['scope'],'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
+                          'scope':spec['scope'],'ports':spec['ports'],'duration_seconds':spec['duration_seconds'],'purpose':spec['purpose']})
         return self.status()
 
     def agent_request(self, action, payload):
@@ -298,7 +301,7 @@ class Controller:
         if item['status'] != 'pending': raise ValueError('Request already decided')
         if payload['decision'] == 'approve':
             spec = self.requests.validate_current(self.config, item)
-            self.approve_domains({k:spec[k] for k in ('node_id','domains','duration_seconds','purpose')})
+            self.approve_domains({k:spec[k] for k in ('node_id','domains','duration_seconds','purpose','ports')})
             self.requests.decided(item, 'approved', self.approvals.grants[item['node_id']]['id'])
         else:
             self.requests.decided(item, 'rejected')
@@ -309,7 +312,7 @@ class Controller:
         if not isinstance(payload,dict) or set(payload)!={'id'}: raise ValueError('id required')
         if not any(g['id']==payload['id'] for g in self.approvals.grants.values()): raise ValueError('Approval no longer exists')
         selected = next(g for g in self.approvals.grants.values() if g['id']==payload['id'])
-        detail = {key:selected[key] for key in ('node_id','source','domains','purpose','duration_seconds')}
+        detail = {key:selected[key] for key in ('node_id','source','domains','ports','purpose','duration_seconds') if key in selected}
         apply_enabled(False)
         try: self.approvals.revoke(payload['id'])
         except Exception:

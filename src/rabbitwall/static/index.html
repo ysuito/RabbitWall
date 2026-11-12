@@ -33,13 +33,14 @@
 <section class="settings-card approval-page"><div class="section-title"><h2><i>限</i>許可中</h2></div><div id="approval-list"></div></section>
 <details class="approval-manual"><summary>手動で許可</summary><form id="approval-form"><div class="approval-fields"><label>ノード<select id="approval-node" required aria-label="許可対象ノード"></select></label><label>時間<select id="approval-duration"><option value="60">1分</option><option value="300" selected>5分</option><option value="1800">30分</option></select></label><label class="approval-purpose">目的<input id="approval-purpose" maxlength="200" required placeholder="依存パッケージの取得"></label></div>
 <div class="approval-domain-label"><div class="approval-domain-heading"><label for="approval-domains">接続先（ドメイン / Any）</label><button id="approval-any" class="secondary" type="button" aria-label="接続先をAnyにする">Any</button></div><textarea id="approval-domains" required maxlength="8192" rows="4" placeholder="github.com&#10;api.github.com&#10;または Any（ドメイン制限なし）"></textarea></div>
+<label class="approval-domain-label">ポート（空欄は TCP 80/443）<input id="approval-ports" type="text" maxlength="128" placeholder="例：udp/123 または tcp/443, udp/123" spellcheck="false"></label>
 <button id="approval-submit" class="primary" type="submit" disabled>承認して許可</button></form></details>
 <details id="request-history" class="request-history" hidden><summary id="request-history-summary">処理済み</summary><div id="domain-request-history"></div></details>
 <p id="approval-message" class="hint" role="status"></p>
 </div>
 <dialog id="approval-tips" class="tips-dialog" aria-labelledby="approval-tips-title"><div class="section-title"><h2 id="approval-tips-title">一時許可のTIPS</h2><button id="approval-tips-close" class="secondary" type="button" aria-label="TIPSを閉じる">閉じる ×</button></div>
 <dl><dt>申請の確認</dt><dd>ノード・目的・ドメイン・時間を確認して承認か却下を選びます。申請文は外部入力として扱ってください。承認した時点から期限を数えます。</dd>
-<dt>許可の範囲</dt><dd>正確なドメイン名のDNSと、その応答に含まれる公開IPv4へのTCP 80/443だけを許可します。サブドメインやリダイレクト先も個別の承認が必要です。URL・IP直指定・ワイルドカードは使えません。最大32ドメインです。手動許可でAnyを指定すると、選択したデバイスのドメイン制限を外し、公開IPv4へのHTTP／HTTPS・NTPと通常のDNSを許可します。エージェントはAnyを申請できません。</dd>
+<dt>許可の範囲</dt><dd>指定したドメインのDNSと、その応答に含まれる公開IPv4への指定ポートだけを許可します。TCPまたはUDPを最大8組指定でき、空欄はTCP 80/443です。NTPは udp/123 を指定してください。DNSにはRabbitWallを使用してください。サブドメインやリダイレクト先も個別の承認が必要です。URL・IP直指定・ワイルドカードは使えません。最大32ドメインです。手動許可でAnyを指定すると、選択したデバイスに公開IPv4へのHTTP／HTTPS・NTPと通常のDNSを許可します。</dd>
 <dt>切り替えと終了</dt><dd>承認すると全体開通を停止し、同じノードの前の許可を置き換えます。期限切れ・取消しで通信を遮断します。再起動や更新後は許可を破棄します。</dd>
 <dt>接続先の制限</dt><dd>IP単位の制御です。同じIPを共有する別サービスや、許可先へのアップロードまでは分離・制限しません。</dd>
 <dt>申請の通知</dt><dd>画面を開いている間、約5秒ごとに新しい申請を確認します。メニューの件数と警戒色のヘッダー通知でお知らせします。通知内でドメイン・ノード・目的・希望時間・申請日時を確認し、その場で承認・却下できます。「通知音」を有効にすると確認音が鳴り、その後は新しい申請ごとに鳴ります。通知音の設定はこのブラウザーに保存されます。再読み込み後、ブラウザーが音声再生を制限する場合は「待機」と表示し、画面の操作後に再開します。端末の消音やブラウザーの休止中は音が出ない場合があります。</dd></dl>
