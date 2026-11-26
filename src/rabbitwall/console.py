@@ -218,21 +218,48 @@ def collect_once(db, state_path, interval, dns_drops=None):
                             "drops": drops})
 
 
+# Simulated locations and service names for offline map rendering. Public IPv4
+# samples also exercise the same traffic rankings as the collector.
+# Address, country, service label, destination port, TX MiB, RX MiB.
+DEMO_DESTINATIONS = (
+    ("13.112.12.34", "JP", "model-tokyo", 443, 38, 1536),
+    ("3.34.12.56", "KR", "registry-seoul", 443, 12, 480),
+    ("168.95.1.1", "TW", "mirror-taipei", 80, 1, 56),
+    ("13.232.34.56", "IN", "packages-mumbai", 443, 3, 144),
+    ("18.130.12.34", "GB", "registry-london", 443, 48, 928),
+    ("3.120.12.34", "DE", "build-frankfurt", 22, 510, 46),
+    ("35.180.12.34", "FR", "assets-paris", 443, 8, 288),
+    ("52.12.34.56", "US", "models-oregon", 443, 96, 2048),
+    ("35.182.12.34", "CA", "backup-montreal", 22, 740, 32),
+)
+DEMO_COUNTRIES = {address: code for address, code, *_ in DEMO_DESTINATIONS} | {"1.1.1.1": "US", "8.8.8.8": "US"}
+
+
 def demo_state():
     now = utc_now()
+    timestamp = dt.datetime.fromisoformat(now).timestamp()
     host = next((node['ip'] for node in SETTINGS['nodes'] if node['interface']==SETTINGS['ai_if']), AI_IP)
     admin = SETTINGS['admin_ip']
-    raw = "\n".join([
+    raw = [
         f"ipv4 2 tcp 6 431999 ESTABLISHED src={host} dst=1.1.1.1 sport=52318 dport=443 packets=45 bytes=8120 src=1.1.1.1 dst={host} sport=443 dport=52318 packets=120 bytes=450000 [ASSURED] mark=0 id=10",
         f"ipv4 2 udp 17 28 src={host} dst={AI_IP} sport=45218 dport=53 packets=1 bytes=68 src={AI_IP} dst={host} sport=53 dport=45218 packets=1 bytes=150 mark=0 id=11",
         f"ipv4 2 tcp 6 431999 ESTABLISHED src={UPLINK_IP} dst=8.8.8.8 sport=53712 dport=443 packets=40 bytes=9400 src=8.8.8.8 dst={UPLINK_IP} sport=443 dport=53712 packets=350 bytes=1840000 [ASSURED] mark=0 id=12",
-        f"ipv4 2 tcp 6 431999 ESTABLISHED src={admin} dst={host} sport=50105 dport=22 packets=54 bytes=4200 src={host} dst={admin} sport=22 dport=50105 packets=40 bytes=18200 [ASSURED] mark=0 id=13"])
-    flows = parse_conntrack(raw)
+        f"ipv4 2 tcp 6 431999 ESTABLISHED src={admin} dst={host} sport=50105 dport=22 packets=54 bytes=4200 src={host} dst={admin} sport=22 dport=50105 packets=40 bytes=18200 [ASSURED] mark=0 id=13"]
+    domains = {"1.1.1.1": "one.one.one.one"}
+    mib = 1024**2
+    for i, (address, _, label, port, tx, rx) in enumerate(DEMO_DESTINATIONS):
+        sport = 54000 + i
+        raw.append(f"tcp 6 431999 ESTABLISHED src={host} dst={address} sport={sport} dport={port} "
+                   f"bytes={tx*mib} src={address} dst={host} sport={port} dport={sport} "
+                   f"bytes={rx*mib} [ASSURED] id={100+i}")
+        domains[address] = label + ".example"
+    flows = parse_conntrack("\n".join(raw))
     for flow in flows:
         flow.update(first_seen=now, last_seen=now)
-        flow["domain_hints"] = ([{"domain": "one.one.one.one", "observed_at": dt.datetime.fromisoformat(now).timestamp()-10,
-                                  "expires_at": time.time()+300, "client": flow["src"], "address": flow["dst"]}]
-                                if flow["dst"] == "1.1.1.1" else [])
+        domain = domains.get(flow["dst"])
+        flow["domain_hints"] = ([{"domain": domain, "observed_at": timestamp-10,
+                                  "expires_at": timestamp+300, "client": flow["src"], "address": flow["dst"]}]
+                                if domain else [])
     demo_db = sqlite3.connect(":memory:")
     collect_analytics(demo_db, flows, [], (dt.datetime.fromisoformat(now)-dt.timedelta(seconds=5)).isoformat())
     for flow in flows:
@@ -240,12 +267,12 @@ def demo_state():
             flow['tx_bytes'] *= 3; flow['rx_bytes'] *= 4
     analytics = collect_analytics(demo_db, flows, [], now)
     observed = [hint for flow in flows for hint in flow.get('domain_hints', [])]
-    record_answer_history(demo_db, observed, dt.datetime.fromisoformat(now).timestamp())
+    record_answer_history(demo_db, observed, timestamp)
     country_drop = {"time":now, "scope":"AI", "chain":"input", "src":host,
                     "dst":str(AI_IP), "proto":"UDP", "sport":"50322", "dport":"53",
                     "in":SETTINGS['ai_if'], "out":"", "dns_reason":"closed",
                     "dns_questions":[{"name":"one.one.one.one.", "type":"A"}], "dns_error":None}
-    country_drop['dns_country_candidates'] = drop_country_candidates(demo_db, country_drop, dt.datetime.fromisoformat(now).timestamp())
+    country_drop['dns_country_candidates'] = drop_country_candidates(demo_db, country_drop, timestamp)
     demo_db.close()
     return {"analytics": analytics, "updated_at": now, "interval": 5, "demo": True, "collector_ok": True,
             "errors": [], "flows": flows, "history": [dict(f, ended_at=None) for f in flows],
@@ -551,7 +578,8 @@ def make_handler(state_path, port, demo=False, control_callback=None, token_file
                 return
             elif path == "/api/state":
                 try:
-                    data = countries.enrich(demo_state() if demo else json.loads(state_path.read_text()))
+                    data = (countries.enrich(demo_state(), country_overrides=DEMO_COUNTRIES) if demo
+                            else countries.enrich(json.loads(state_path.read_text())))
                     age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(data["updated_at"])).total_seconds()
                     data["network"] = metadata(demo_config if demo else load())
                     data["stale"] = age > max(20, data.get("interval", 5) * 3)

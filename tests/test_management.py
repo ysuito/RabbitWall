@@ -121,7 +121,10 @@ class HTTP(unittest.TestCase):
         return bytes(conn.output)
 
     def test_demo_api_and_headers(self):
-        response = self.request("/api/state")
+        with tempfile.TemporaryDirectory() as directory:
+            handler = console.make_handler(Path("/unused"), 8765, demo=True,
+                                           geoip_path=Path(directory) / "missing.sqlite3")
+            response = self.request("/api/state", handler=handler)
         head, body = response.split(b"\r\n\r\n", 1)
         self.assertIn(b"200 OK", head)
         self.assertIn(b"Content-Security-Policy:", head)
@@ -129,7 +132,22 @@ class HTTP(unittest.TestCase):
         self.assertTrue(data["demo"])
         self.assertTrue(any(flow["scope"] == "MANAGEMENT" and flow["dst"] == "10.1.0.10" for flow in data["flows"]))
         self.assertEqual(data["flows"][0]["src_country"]["kind"], "private")
-        self.assertIn("geoip", data)
+        self.assertFalse(data["geoip"]["available"])
+        world = json.loads((console.STATIC / "world.json").read_text())["countries"]
+        for section in ("flows", "history"):
+            public_ai = [flow for flow in data[section] if flow["scope"] == "AI"
+                         and flow["dst_country"]["kind"] == "country"]
+            self.assertEqual(len({flow["dst"] for flow in public_ai}), 10)
+            codes = {flow["dst_country"]["code"] for flow in public_ai}
+            self.assertEqual(len(codes), 9)
+            self.assertGreater(max(flow["tx_bytes"] + flow["rx_bytes"] for flow in public_ai), 1024**3)
+        for section in ("flows", "history", "drops"):
+            for flow in data[section]:
+                locations = [flow["dst_country"]]
+                locations.extend(item["country"] for item in flow.get("dns_country_candidates", []))
+                for location in locations:
+                    if location["kind"] == "country":
+                        self.assertGreater(world[location["code"]]["point"][1], 0)
 
     def test_reject_rebinding_cross_site_and_path_traversal(self):
         self.assertIn(b"403", self.request("/api/state", host="attacker.example"))

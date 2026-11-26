@@ -326,7 +326,7 @@ function render() {
     [...(f.domain_hints || []).map(h => h.domain), ...(f.dns_questions || []).flatMap(q=>[q.name,q.type]), ...(f.dns_country_candidates || []).flatMap(c=>[c.address,countryText(c.country)]), f.dns_error, f.src, f.dst, f.sport, f.dport, f.proto, f.service, f.state, f.chain, direction(f), countryText(f.src_country), countryText(f.dst_country)].join(" ").toLowerCase().includes(search);
   const rows = snapshot[tab].filter(matches);
   $("row-count").textContent = rows.length + " 件";
-  atlas.update(rows, {kind:tab, stale:snapshot.stale || !snapshot.collector_ok, network:snapshot.network});
+  atlas.update(rows, {kind:tab, demo:snapshot.demo, stale:snapshot.stale || !snapshot.collector_ok, network:snapshot.network});
   $("table-head").replaceChildren(); const header = document.createElement("tr");
   for (const title of heads[tab]) { const th = document.createElement("th"); th.textContent = title; header.append(th); } $("table-head").append(header);
   $("rows").replaceChildren();

@@ -23,7 +23,13 @@
       value /= 1024;
     }
   }
-  function routeVisual(route, kind) {
+  function routeVisual(route, kind, demo = false) {
+    if (demo && kind !== "drops") {
+      // Keep light routes near 1 px and reserve the strongest emphasis for multi-GiB transfers.
+      const emphasis = Math.min(1, (route.totalBytes || 0)/(6*1024**3))**1.75;
+      return {width:1+7*emphasis, particles:route.totalBytes > 0 ? 1+Math.floor(9*emphasis) : 0,
+        period:4200/(1+2*emphasis)};
+    }
     if (kind !== "history") return {width:Math.min(2.2,.8+Math.log2(route.count+1)*.35), particles:1, period:4200};
     // Logarithmic, fixed scale: 1 KB through 1 GB; cap drawing cost per route.
     const volume = Math.min(1, Math.log2(1+(route.totalBytes || 0)/1024)/20);
@@ -162,7 +168,7 @@
       fetch("/world.json", {cache:"force-cache"}).then(response => { if (!response.ok) throw new Error("map unavailable"); return response.json(); })
         .then(world => {
           if (!Array.isArray(world.features) || !world.countries || typeof world.countries !== "object") throw new Error("invalid map data");
-          this.world = world; this.update(this.rows, {kind:this.kind, stale:this.stale});
+          this.world = world; this.update(this.rows, {kind:this.kind, demo:this.demo, stale:this.stale});
           this.spherePolygons=world.features.map(feature=>feature.polygons.map(polygon=>polygon.map(ring=>ring.map(SphereMap.vector))));
           this.paintBackground();this.draw(performance.now());
         })
@@ -249,6 +255,7 @@
     update(rows, options = {}) {
       this.network = options.network || this.network || {hosts:[],site_label:"LAN拠点",site_location:[139,36]};
       this.rows = rows; this.kind = options.kind || "flows"; this.stale = Boolean(options.stale);
+      this.demo = Boolean(options.demo);
       this.model = groupFlows(rows, this.world.countries, this.kind);
       const hosts=this.network.hosts || [];
       for(const route of this.model.routes)for(const node of [route.src,route.dst]){
@@ -261,7 +268,7 @@
     paintSummary() {
       const model = this.model;
       this.summary.textContent = `${({flows:"現況",history:"履歴",drops:"拒否"})[this.kind]} · ${model.totalFlows} 件 · ${model.countryCount} か国 · ${model.routes.length}/${model.totalRoutes} 経路` +
-        (this.kind === "history" ? " · 線幅・光＝累積通信量" : "") + (this.stale ? " · 更新停止中" : "") + (this.mapError ? " · 地図データを読み込めません" : "");
+        (this.kind === "history" || (this.demo && this.kind === "flows") ? " · 線幅・光＝累積通信量" : "") + (this.stale ? " · 更新停止中" : "") + (this.mapError ? " · 地図データを読み込めません" : "");
     }
     paintList() {
       const focused=document.activeElement?.dataset?.routeKey;
@@ -490,13 +497,16 @@
       const ctx=this.ctx;ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,this.canvas.width,this.canvas.height);ctx.drawImage(this.background,0,0);
       const viewScale=this.scale*(this.zoom || 1);ctx.setTransform(viewScale,0,0,viewScale,0,0);
       const moving=!this.paused && !this.stale && !document.hidden;
+      const demoTraffic=this.demo && this.kind !== "drops";
+      const volumeStyle=demoTraffic || this.kind === "history";
       for (const path of this.paths) {
         if(path.hidden)continue;
-        const {route,a,b,c}=path, highlighted=!this.selected || this.selected===route.key;
+        const {route,a,b,c}=path, selected=this.selected===route.key, highlighted=!this.selected || selected;
+        const visual=routeVisual(route,this.kind,this.demo);
         ctx.globalAlpha=highlighted ? .78 : .12;ctx.strokeStyle=this.color(route.color);
-        const visual=routeVisual(route,this.kind);
-        ctx.lineWidth=this.kind === "history" ? visual.width + (this.selected===route.key ? 1.3 : 0) : this.selected===route.key ? 2.2 : visual.width;
-        ctx.shadowColor=this.color(route.color);ctx.shadowBlur=highlighted ? 5 : 0;
+        ctx.lineWidth=visual.width + (selected && volumeStyle ? 1.3 : 0);
+        if(selected && !volumeStyle)ctx.lineWidth=2.2;
+        ctx.shadowColor=this.color(route.color);ctx.shadowBlur=highlighted ? (demoTraffic ? 2+visual.width : 5) : 0;
         ctx.setLineDash(this.kind === "drops" || !route.animate ? [3,5] : []);
         ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.quadraticCurveTo(b.x,b.y,c.x,c.y);ctx.stroke();ctx.setLineDash([]);
         if (moving && route.animate && highlighted) {

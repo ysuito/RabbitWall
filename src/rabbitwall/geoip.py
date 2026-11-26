@@ -81,13 +81,17 @@ class CountryLookup:
             self.cache[address] = result
             return result
 
-    def enrich(self, state):
+    def enrich(self, state, *, country_overrides=None):
+        def locate(address):
+            code = country_overrides.get(address) if country_overrides else None
+            return {"code": code, "kind": "country"} if code else self.lookup(address)
+
         for section in ("flows", "history", "drops"):
             for flow in state.get(section, []):
-                flow["src_country"] = self.lookup(flow["src"])
-                flow["dst_country"] = self.lookup(flow["dst"])
+                flow["src_country"] = locate(flow["src"])
+                flow["dst_country"] = locate(flow["dst"])
                 if section == "drops":
                     for candidate in flow.get("dns_country_candidates", [])[:8]:
-                        candidate["country"] = self.lookup(candidate["address"])
+                        candidate["country"] = locate(candidate["address"])
         state["geoip"] = self.status()
         return state

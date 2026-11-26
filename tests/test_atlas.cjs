@@ -148,6 +148,15 @@ assert.equal(groupFlows([{...flow,tx_bytes:null,rx_bytes:null}],world.countries,
 assert.equal(groupFlows([{...flow,tx_bytes:-1,rx_bytes:NaN}],world.countries,"history").routes[0].totalBytes,null);
 assert.equal(byteLabel(null),"通信量不明");assert.equal(byteLabel(1024**3),"1.0 GB");
 assert.deepEqual(routeVisual({count:1,totalBytes:1},"flows"),routeVisual({count:1,totalBytes:1024**3},"flows"));
+const demoLight = routeVisual({count:1,totalBytes:1024**3}, "flows", true);
+const demoMedium = routeVisual({count:1,totalBytes:2*1024**3}, "flows", true);
+const demoHeavy = routeVisual({count:1,totalBytes:6*1024**3}, "flows", true);
+assert.ok(demoLight.width < 1.5 && demoMedium.width > 2 && demoMedium.width < 3);
+assert.ok(demoHeavy.width > huge.width);
+assert.ok(demoHeavy.particles > demoLight.particles && demoHeavy.period < demoLight.period);
+assert.deepEqual(routeVisual({count:1,totalBytes:6*1024**3}, "history", true), demoHeavy);
+assert.deepEqual(routeVisual({count:1,totalBytes:1024**3}, "drops", true),
+  routeVisual({count:1,totalBytes:1024**3}, "drops"));
 console.log("Session atlas: historical byte volume controls bounded line width, particle count, period and route priority.");
 
 // Dropped DNS is drawn toward historical country candidates, never toward its local resolver.
